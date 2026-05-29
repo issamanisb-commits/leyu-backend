@@ -5,6 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import Redis from 'ioredis';
 import {
   TaskMicroTasksResponse,
@@ -14,6 +15,7 @@ import {
 @Injectable()
 export class CacheService implements OnModuleInit, OnModuleDestroy {
   private cachedTaskIds: string[] = [];
+  private cachedContributorIds:string[]=[];
   constructor(private readonly configService: ConfigService) {}
   async onModuleInit() {
     const redisUrl = this.configService.get<string>('REDIS_URL') || '';
@@ -80,7 +82,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     await this.client.set(key, JSON.stringify(payload));
     // set expire time
     await this.client.expire(key, 20 * 60);
-    this.cachedTaskIds.push(key);
+    this.cachedContributorIds.push(key);
+
   }
 
   async writeContributorTaskMicroTasks(
@@ -287,5 +290,44 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       );
     }
     this.logger.log(`Deleted ${keysToDelete.length} keys for taskId ${taskId}`);
+  }
+  async clearCacheByContributorIds(contributorIds: string[]): Promise<void> {
+    if (!this.client) throw new Error('Redis client not initialized');
+    const keysToDelete = this.cachedContributorIds.filter((key) =>
+      contributorIds.some((id) => key.includes(id)),
+    );
+    if (keysToDelete.length > 0) {
+      await this.client.del(...keysToDelete);
+      this.cachedContributorIds = this.cachedContributorIds.filter(
+        (key) => !contributorIds.some((id) => key.includes(id)),
+      );
+    }
+    this.logger.log(
+      `Deleted ${keysToDelete.length} keys for contributorIds ${contributorIds.join(', ')}`,
+    );
+  }
+
+  async clearAllTaskRelatedCaches(): Promise<void> {
+    if (!this.client) throw new Error('Redis client not initialized');
+
+    const keysToDelete = [
+      ...this.cachedTaskIds,
+      ...this.cachedContributorIds,
+    ];
+
+    if (keysToDelete.length > 0) {
+      await this.client.del(...keysToDelete);
+      this.cachedTaskIds = [];
+      this.cachedContributorIds = [];
+    }
+
+    this.logger.log(
+      `Cleared all task-related caches: ${keysToDelete.length} keys deleted`,
+    );
+  }
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async removeAllCaches(){
+    this.cachedContributorIds=[];
+    this.cachedTaskIds=[];
   }
 }

@@ -127,6 +127,7 @@ export class MicroTaskController {
           'Invalid CSV file format. Expected an array of objects.',
         );
       }
+      console.log("Micro tasks ",data.slice(0,5))
       // Assuming data is an array of objects
       const microTasks =
         await this.microTaskService.createMultipleTextMicroTask(
@@ -144,7 +145,7 @@ export class MicroTaskController {
         entity_type: ActivityEntityType.MICRO_TASK,
         entity_id: microTasks.map((microTask) => microTask.id).join(','),
       });
-      return microTasks;
+      return []
     } catch (error) {
       await queryRunner.rollbackTransaction();
       // delete the file from MinIO if needed
@@ -497,7 +498,7 @@ export class MicroTaskController {
     const is_test = req.body.is_test === 'true' || req.body.is_test === true;
     const instruction = req.body.instruction ? req.body.instruction : null;
     try {
-      const audiosMetada: {
+      const audiosMetadata: {
         task_id: string;
         file_path: string;
         type: 'audio';
@@ -521,7 +522,7 @@ export class MicroTaskController {
       );
       await this.microTaskService.createMultipleAudioMicroTask(
         task_id,
-        audiosMetada,
+        audiosMetadata,
         queryRunner,
       );
       await this.activityLogService.create({

@@ -16,7 +16,7 @@ export const s3 = new S3Client({
     secretAccessKey: configService.get<string>('MINIO_SECRET_KEY') as string,
   },
   region: 'us-east-1',
-  forcePathStyle: configService.get<boolean>('MINIO_S3_FORCE_PATH_STYLE', true),
+  forcePathStyle:true // configService.get<boolean>('MINIO_S3_FORCE_PATH_STYLE', true),
 });
 
 export const multerAudioS3Storage = multerS3({

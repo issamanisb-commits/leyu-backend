@@ -16,6 +16,10 @@ import {
 } from 'src/utils/TaskDistribution.util';
 import { UserScoreService } from 'src/auth/service/UserScore.service';
 import { CacheService } from 'src/cache/CacheService.service';
+import { User } from 'src/auth/entities/User.entity';
+import { TaskDistributionService } from './TaskDistribution.service';
+import { Task } from 'src/project/entities/Task.entity';
+import pLimit from 'p-limit';
 @Injectable()
 /**
  * The TaskDistributionService class is responsible for managing task distribution and redistribution
@@ -32,6 +36,7 @@ export class TaskRedistributionService {
     private readonly userService: UserService,
     private readonly userScoreService: UserScoreService,
     private readonly cacheService: CacheService,
+    private readonly taskDistributionService:TaskDistributionService,
     private readonly dataSource: DataSource,
   ) {}
   /**
@@ -49,127 +54,172 @@ export class TaskRedistributionService {
       where: { is_closed: false, distribution_started: true },
       relations: { taskRequirement: true },
     });
+    // const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
+    // await queryRunner.connect();
+    const limit = pLimit(5); // only 5 concurrent tasks
 
-    for (const task of tasks) {
-      const taskRequirement = task.taskRequirement;
-      const taskId = task.id;
-
-      try {
-        // Fetch micro-task stats and current contributors
-        const [microTaskStats, contributorMicroTasks] = await Promise.all([
-          this.microTaskStatisticsService.findAll({
-            where: { task_id: taskId },
-          }),
-          this.contributorMicroTaskService.findAllUnExpiredAssignments({
-            where: { task_id: taskId },
-          }),
-        ]);
-
-        // Get all eligible contributors
-        const allContributors: { id: string; gender: string; score: number }[] =
-          [];
-        if (!task.is_public || task.require_contributor_test) {
-          const userTasks = await this.taskService.findAllTaskMembers(taskId, {
-            where: { role: Role.CONTRIBUTOR },
-          });
-          const contributorIds = userTasks.map((userTask) => {
-            return {
-              id: userTask.user.id,
-              gender: userTask.user.gender,
-              score: 0,
-            };
-          });
-          allContributors.push(...contributorIds);
-        } else {
-          const contributorIds =
-            await this.userService.filterUserByTaskRequirement(
-              taskRequirement,
-              task.language_id,
-            );
-          allContributors.push(...contributorIds);
-        }
-
-        // Filter out contributors who have already contributed
-        const existingContributorIds = new Set(
-          contributorMicroTasks.map((cmt) => cmt.contributor_id),
-        );
-
-        let newContributors = allContributors.filter(
-          (contributor) => !existingContributorIds.has(contributor.id),
-        );
-        const totalContributors =
-          newContributors.length + existingContributorIds.size;
-        const expectedTotalContributor = task.max_expected_no_of_contributors;
-        if (expectedTotalContributor) {
-          const diff = expectedTotalContributor - totalContributors;
-          if (diff > 0) {
-            newContributors = newContributors.slice(0, diff);
-          }
-        }
-        // Create a transaction
-        const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
-        await queryRunner.connect();
-        await queryRunner.startTransaction();
-
-        try {
-          const batchSize = taskRequirement.batch
-            ? taskRequirement.batch
-            : taskRequirement.max_micro_task_per_contributor;
-          const deadlineHr =
-            task?.contributor_completion_time_limit || undefined;
-          if (taskRequirement?.is_gender_specific) {
-            await this.reDistributeTaskGenderBased(
-              contributorMicroTasks,
-              newContributors,
-              taskId,
-              microTaskStats,
-              taskRequirement.max_micro_task_per_contributor,
-              taskRequirement.max_contributor_per_micro_task,
-              batchSize,
-              taskRequirement,
-              queryRunner,
-              deadlineHr,
-            );
-          } else {
-            await this.reDistributeTask(
-              contributorMicroTasks,
-              newContributors.map((c) => c.id),
-              taskId,
-              microTaskStats,
-              taskRequirement.max_micro_task_per_contributor,
-              taskRequirement.max_contributor_per_micro_task,
-              batchSize,
-              queryRunner,
-              deadlineHr,
-            );
-          }
-
-          await queryRunner.commitTransaction();
-          await this.cacheService.clearCacheByTaskId(taskId);
-        } catch (error) {
-          console.error(
-            `[Redistribution] Task ID ${taskId}: Error during redistribution`,
-            error,
-          );
-          await queryRunner.rollbackTransaction();
-        } finally {
-          try {
-            await queryRunner.release();
-          } catch (releaseError) {
-            console.error(
-              `[Redistribution] Task ID ${taskId}: Error releasing queryRunner`,
-              releaseError,
-            );
-          }
-        }
-      } catch (outerError) {
-        console.error(
-          `[Redistribution] Task ID ${task.id}: Outer error`,
-          outerError,
-        );
-      }
+    try{
+      await Promise.all(
+        tasks.map(task =>
+          limit(() => this.distributeForATask(task))
+        )
+      );
+      await this.cacheService.clearAllCache()
+    }catch(error){
+      console.log("Error in task distribution",error);
     }
+    // await queryRunner.release();
   }
+
+    async distributeForATask(task: Task): Promise<void> {
+    const queryRunner = this.dataSource.createQueryRunner();
+
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+        await this.taskDistributionService.startNewTaskDistribution(
+            task.id,
+            queryRunner
+        );
+
+        await queryRunner.commitTransaction();
+
+    } catch (error) {
+
+        await queryRunner.rollbackTransaction();
+
+        console.log("Error in task distribution", error);
+
+    } finally {
+
+        await queryRunner.release();
+    }
+}
+    // for (const task of tasks) {
+    //   const taskRequirement = task.taskRequirement;
+    //   const taskId = task.id;
+
+    //   try {
+    //     // Fetch micro-task stats and current contributors
+    //     const [microTaskStats, contributorMicroTasks] = await Promise.all([
+    //       this.microTaskStatisticsService.findAll({
+    //         where: { task_id: taskId },
+    //       }),
+    //       this.contributorMicroTaskService.findAllUnExpiredAssignments({
+    //         where: { task_id: taskId },
+    //       }),
+    //     ]);
+
+    //     // Get all eligible contributors
+    //     const allContributors: { id: string; gender: string; score: number }[] =
+    //       [];
+    //     if (!task.is_public || task.require_contributor_test) {
+    //       const userTasks = await this.taskService.findAllTaskMembers(taskId, {
+    //         where: { role: Role.CONTRIBUTOR },
+    //       });
+    //       const contributorIds = userTasks.map((userTask) => {
+    //         return {
+    //           id: userTask.user.id,
+    //           gender: userTask.user.gender,
+    //           score: 0,
+    //         };
+    //       });
+    //       allContributors.push(...contributorIds);
+    //     } else {
+    //       const contributorIds =
+    //         await this.userService.filterUserByTaskRequirement(
+    //           taskRequirement,
+    //           task.language_id,
+    //         );
+    //       allContributors.push(...contributorIds);
+    //     }
+
+    //     // Filter out contributors who have already contributed
+    //     const existingContributorIds = new Set(
+    //       contributorMicroTasks.map((cmt) => cmt.contributor_id),
+    //     );
+
+    //     let newContributors = allContributors.filter(
+    //       (contributor) => !existingContributorIds.has(contributor.id),
+    //     );
+    //     const totalContributors =
+    //       newContributors.length + existingContributorIds.size;
+    //     const expectedTotalContributor = task.max_expected_no_of_contributors;
+    //     // if (expectedTotalContributor) {
+    //     //   const diff = expectedTotalContributor - totalContributors;
+    //     //   if (diff > 0) {
+    //     //     newContributors = newContributors.slice(0, diff);
+    //     //   }
+    //     // }
+    //     const newContributorsWithSubmissionCount = await this.getTotalSubmissionsOfAContributorPerTask(
+    //       taskId,
+    //       newContributors.map((c) => c.id),
+    //     );
+    //     // Create a transaction
+    //     const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
+    //     await queryRunner.connect();
+    //     await queryRunner.startTransaction();
+
+    //     try {
+    //       const batchSize = taskRequirement.batch
+    //         ? taskRequirement.batch
+    //         : taskRequirement.max_micro_task_per_contributor;
+    //       const deadlineHr =
+    //         task?.contributor_completion_time_limit || undefined;
+    //       if (taskRequirement?.is_gender_specific) {
+    //         await this.reDistributeTaskGenderBased(
+    //           contributorMicroTasks,
+    //           newContributors,
+    //           taskId,
+    //           microTaskStats,
+    //           taskRequirement.max_micro_task_per_contributor,
+    //           taskRequirement.max_contributor_per_micro_task,
+    //           batchSize,
+    //           taskRequirement,
+    //           queryRunner,
+    //           deadlineHr,
+    //         );
+    //       } else {
+    //         await this.reDistributeTask(
+    //           contributorMicroTasks,
+    //           newContributorsWithSubmissionCount,
+    //           taskId,
+    //           microTaskStats,
+    //           taskRequirement.max_micro_task_per_contributor,
+    //           taskRequirement.max_contributor_per_micro_task,
+    //           batchSize,
+    //           queryRunner,
+    //           deadlineHr,
+    //         );
+    //       }
+
+    //       await queryRunner.commitTransaction();
+    //       await this.cacheService.clearAllCache();
+    //     } catch (error) {
+    //       console.error(
+    //         `[Redistribution] Task ID ${taskId}: Error during redistribution`,
+    //         error,
+    //       );
+    //       await queryRunner.rollbackTransaction();
+    //     } finally {
+    //       try {
+    //         await queryRunner.release();
+    //       } catch (releaseError) {
+    //         console.error(
+    //           `[Redistribution] Task ID ${taskId}: Error releasing queryRunner`,
+    //           releaseError,
+    //         );
+    //       }
+    //     }
+    //   } catch (outerError) {
+    //     console.error(
+    //       `[Redistribution] Task ID ${task.id}: Outer error`,
+    //       outerError,
+    //     );
+    //   }
+    // }
+  
 
   /**
    * Re-distributes micro-tasks among new and existing contributors for a given task.
@@ -196,183 +246,183 @@ export class TaskRedistributionService {
    * - Reduce contributors who don't done their assigned task on time
    * - Persists final assignments and updates micro-task statistics using the relevant services.
    */
-  async reDistributeTask(
-    existingAssignments: ContributorMicroTasks[],
-    newContributorIds: string[],
-    taskId: string,
-    microTaskStats: MicroTaskStatistics[],
-    maxPerContributor: number,
-    maxContributorsPerMicroTask: number,
-    batch: number,
-    queryRunner: QueryRunner,
-    maxWaitingHours?: number,
-  ): Promise<void> {
-    const deadline = maxWaitingHours
-      ? new Date(Date.now() + maxWaitingHours * 60 * 60 * 1000)
-      : undefined;
-    const percentRequired = 0.5; // Assumed value — adjust as needed
+  // async reDistributeTask(
+  //   existingAssignments: ContributorMicroTasks[],
+  //   newContributorIds: {contributor_id: string, submission_count: string}[],
+  //   taskId: string,
+  //   microTaskStats: MicroTaskStatistics[],
+  //   maxPerContributor: number,
+  //   maxContributorsPerMicroTask: number,
+  //   batch: number,
+  //   queryRunner: QueryRunner,
+  //   maxWaitingHours?: number,
+  // ): Promise<void> {
+  //   const deadline = maxWaitingHours
+  //     ? new Date(Date.now() + maxWaitingHours * 60 * 60 * 1000)
+  //     : undefined;
+    
 
-    // Filter unfinished microtasks
-    const undoneMicroTasks = microTaskStats.filter(
-      (stat) => stat.no_of_contributors < stat.expected_no_of_contributors,
-    );
+  //   // Filter unfinished microtasks
+  //   const undoneMicroTasks = microTaskStats.filter(
+  //     (stat) => stat.no_of_contributors < stat.expected_no_of_contributors,
+  //   );
 
-    const { contributor_micro_tasks, micro_task_statistics } =
-      distributeTaskAmongNewContributors(
-        newContributorIds,
-        undoneMicroTasks,
-        taskId,
-        maxPerContributor,
-        maxContributorsPerMicroTask,
-        batch,
-        deadline,
-      );
+  //   const { contributor_micro_tasks, micro_task_statistics } =
+  //     distributeTaskAmongNewContributors(
+  //       newContributorIds,
+  //       undoneMicroTasks,
+  //       taskId,
+  //       maxPerContributor,
+  //       maxContributorsPerMicroTask,
+  //       batch,
+  //       deadline,
+  //     );
 
-    // Revoke assignments below threshold
-    for (const assignment of contributor_micro_tasks) {
-      if (assignment.total_micro_tasks < percentRequired * maxPerContributor) {
-        for (const microTaskId of assignment.micro_task_ids) {
-          const stat = micro_task_statistics.find(
-            (s) => s.micro_task_id === microTaskId,
-          );
-          if (stat) stat.no_of_contributors--;
-        }
-        assignment.micro_task_ids = [];
-      }
-    }
+  //   // Revoke assignments below threshold
+  //   for (const assignment of contributor_micro_tasks) {
+  //     if (assignment.total_micro_tasks < batch) {
+  //       for (const microTaskId of assignment.micro_task_ids) {
+  //         const stat = micro_task_statistics.find(
+  //           (s) => s.micro_task_id === microTaskId,
+  //         );
+  //         if (stat) stat.no_of_contributors--;
+  //       }
+  //       assignment.micro_task_ids = [];
+  //     }
+  //   }
 
-    // Filter contributors with actual assignments
-    const validNewAssignments = contributor_micro_tasks.filter(
-      (c) => c.micro_task_ids.length > 0,
-    );
-    const invalidNewAssignments = contributor_micro_tasks.filter(
-      (c) => c.micro_task_ids.length === 0,
-    );
-    // Find reusable contributors (who didn't start their task)
-    const reusableContributors = existingAssignments.filter(
-      (c) =>
-        c.status === ContributorMicroTasksConstantStatus.NEW &&
-        c.dead_line >= new Date(),
-    );
-    const completeButNotFullyAssignedContributors = existingAssignments.filter(
-      (c) =>
-        c.status === ContributorMicroTasksConstantStatus.COMPLETED &&
-        c.micro_task_ids.length < maxPerContributor,
-    );
+  //   // Filter contributors with actual assignments
+  //   const validNewAssignments = contributor_micro_tasks.filter(
+  //     (c) => c.micro_task_ids.length > 0,
+  //   );
+  //   const invalidNewAssignments = contributor_micro_tasks.filter(
+  //     (c) => c.micro_task_ids.length === 0,
+  //   );
+  //   // Find reusable contributors (who didn't start their task)
+  //   // const reusableContributors = existingAssignments.filter(
+  //   //   (c) =>
+  //   //     c.status === ContributorMicroTasksConstantStatus.NEW &&
+  //   //     c.dead_line >= new Date(),
+  //   // );
+  //   const completeButNotFullyAssignedContributors = existingAssignments.filter(
+  //     (c) =>
+  //       c.status === ContributorMicroTasksConstantStatus.COMPLETED &&
+  //       c.micro_task_ids.length < maxPerContributor,
+  //   );
 
-    const contributorsToRevoke: { contributor_id: string; task_id: string }[] =
-      [];
+  //   // const contributorsToRevoke: { contributor_id: string; task_id: string }[] =
+  //   //   [];
 
-    for (
-      let i = 0;
-      i < invalidNewAssignments.length && i < reusableContributors.length;
-      i++
-    ) {
-      const reusable = reusableContributors[i];
-      const assignment = invalidNewAssignments[i];
+  //   // for (
+  //   //   let i = 0;
+  //   //   i < invalidNewAssignments.length && i < reusableContributors.length;
+  //   //   i++
+  //   // ) {
+  //   //   const reusable = reusableContributors[i];
+  //   //   const assignment = invalidNewAssignments[i];
 
-      const startIdx = Math.min(
-        reusable.current_batch,
-        reusable.micro_task_ids.length,
-      );
-      const reassignedMicroTasks = reusable.micro_task_ids.slice(startIdx);
+  //   //   const startIdx = Math.min(
+  //   //     reusable.current_batch,
+  //   //     reusable.micro_task_ids.length,
+  //   //   );
+  //   //   const reassignedMicroTasks = reusable.micro_task_ids.slice(startIdx);
 
-      if (reassignedMicroTasks.length === 0) continue;
+  //   //   if (reassignedMicroTasks.length === 0) continue;
 
-      assignment.micro_task_ids = reassignedMicroTasks;
-      assignment.status = ContributorMicroTasksConstantStatus.NEW;
-      assignment.total_micro_tasks = reassignedMicroTasks.length;
-      assignment.batch = reusable.batch;
-      assignment.dead_line = deadline;
+  //   //   assignment.micro_task_ids = reassignedMicroTasks;
+  //   //   assignment.status = ContributorMicroTasksConstantStatus.NEW;
+  //   //   assignment.total_micro_tasks = reassignedMicroTasks.length;
+  //   //   assignment.batch = reusable.batch;
+  //   //   assignment.dead_line = deadline;
 
-      contributorsToRevoke.push({
-        contributor_id: reusable.contributor_id,
-        task_id: taskId,
-      });
-    }
-    for (let i = 0; i < completeButNotFullyAssignedContributors.length; i++) {
-      const newIds: string[] = [];
-      for (const microTask of microTaskStats) {
-        if (
-          microTask.no_of_contributors <
-            microTask.expected_no_of_contributors &&
-          !completeButNotFullyAssignedContributors[i].micro_task_ids.includes(
-            microTask.micro_task_id,
-          )
-        ) {
-          newIds.push(microTask.micro_task_id);
-          microTask.no_of_contributors++;
-        }
-        if (
-          newIds.length +
-            completeButNotFullyAssignedContributors[i].micro_task_ids.length >=
-          maxPerContributor
-        ) {
-          break;
-        }
-      }
-      if (newIds.length > 0) {
-        completeButNotFullyAssignedContributors[i].total_micro_tasks =
-          completeButNotFullyAssignedContributors[i].micro_task_ids.length +
-          newIds.length;
-        completeButNotFullyAssignedContributors[i].micro_task_ids =
-          completeButNotFullyAssignedContributors[i].micro_task_ids = [
-            ...new Set([
-              ...completeButNotFullyAssignedContributors[i].micro_task_ids,
-              ...newIds,
-            ]),
-          ];
-        completeButNotFullyAssignedContributors[i].status =
-          ContributorMicroTasksConstantStatus.IN_PROGRESS;
-      }
-    }
-    const revokedAndAssignedAssignments = invalidNewAssignments.filter(
-      (c) => c.micro_task_ids.length > 0,
-    );
+  //   //   contributorsToRevoke.push({
+  //   //     contributor_id: reusable.contributor_id,
+  //   //     task_id: taskId,
+  //   //   });
+  //   // }
+  //   for (let i = 0; i < completeButNotFullyAssignedContributors.length; i++) {
+  //     const newIds: string[] = [];
+  //     for (const microTask of microTaskStats) {
+  //       if (
+  //         microTask.no_of_contributors <
+  //           microTask.expected_no_of_contributors &&
+  //         !completeButNotFullyAssignedContributors[i].micro_task_ids.includes(
+  //           microTask.micro_task_id,
+  //         )
+  //       ) {
+  //         newIds.push(microTask.micro_task_id);
+  //         microTask.no_of_contributors++;
+  //       }
+  //       if (
+  //         newIds.length +
+  //           completeButNotFullyAssignedContributors[i].micro_task_ids.length >=
+  //         maxPerContributor
+  //       ) {
+  //         break;
+  //       }
+  //     }
+  //     if (newIds.length > 0) {
+  //       completeButNotFullyAssignedContributors[i].total_micro_tasks =
+  //         completeButNotFullyAssignedContributors[i].micro_task_ids.length +
+  //         newIds.length;
+  //       completeButNotFullyAssignedContributors[i].micro_task_ids =
+  //         completeButNotFullyAssignedContributors[i].micro_task_ids = [
+  //           ...new Set([
+  //             ...completeButNotFullyAssignedContributors[i].micro_task_ids,
+  //             ...newIds,
+  //           ]),
+  //         ];
+  //       completeButNotFullyAssignedContributors[i].status =
+  //         ContributorMicroTasksConstantStatus.IN_PROGRESS;
+  //     }
+  //   }
+  //   const revokedAndAssignedAssignments = invalidNewAssignments.filter(
+  //     (c) => c.micro_task_ids.length > 0,
+  //   );
 
-    // Remove revoked contributors from original list
-    const remainingAssignments = existingAssignments.filter(
-      (c) =>
-        !contributorsToRevoke.find(
-          (r) => r.contributor_id === c.contributor_id,
-        ),
-    );
-    // update the deadline for the remaining assignments
-    if (deadline) {
-      remainingAssignments.forEach((c) => {
-        c.dead_line = deadline;
-      });
-    }
+  //   // Remove revoked contributors from original list
+  //   // const remainingAssignments = existingAssignments.filter(
+  //   //   (c) =>
+  //   //     !contributorsToRevoke.find(
+  //   //       (r) => r.contributor_id === c.contributor_id,
+  //   //     ),
+  //   // );
+  //   // update the deadline for the remaining assignments
+  //   // if (deadline) {
+  //   //   remainingAssignments.forEach((c) => {
+  //   //     c.dead_line = deadline;
+  //   //   });
+  //   // }
 
-    // Build final list
-    const finalAssignments = [
-      ...remainingAssignments,
-      ...validNewAssignments,
-      ...completeButNotFullyAssignedContributors,
-      ...revokedAndAssignedAssignments,
-    ].map((c) => ({
-      ...c,
-      expected_micro_task_for_contributor: maxPerContributor,
-      task_id: taskId,
-    }));
-    // Persist data
-    await this.contributorMicroTaskService.upsertMany(
-      finalAssignments,
-      queryRunner,
-    );
-    await this.microTaskStatisticsService.upsertMany(
-      microTaskStats,
-      queryRunner,
-    );
-    await this.contributorMicroTaskService.expireAll(
-      contributorsToRevoke,
-      queryRunner,
-    );
-    await this.userScoreService.reduceNoneSubmitScore(
-      contributorsToRevoke.map((c) => c.contributor_id),
-      queryRunner,
-    );
-  }
+  //   // Build final list
+  //   const finalAssignments = [
+  //     // ...remainingAssignments,
+  //     ...validNewAssignments,
+  //     ...completeButNotFullyAssignedContributors,
+  //     ...revokedAndAssignedAssignments,
+  //   ].map((c) => ({
+  //     ...c,
+  //     expected_micro_task_for_contributor: maxPerContributor,
+  //     task_id: taskId,
+  //   }));
+  //   // Persist data
+  //   await this.contributorMicroTaskService.upsertMany(
+  //     finalAssignments,
+  //     queryRunner,
+  //   );
+  //   await this.microTaskStatisticsService.upsertMany(
+  //     microTaskStats,
+  //     queryRunner,
+  //   );
+  //   // await this.contributorMicroTaskService.expireAll(
+  //   //   contributorsToRevoke,
+  //   //   queryRunner,
+  //   // );
+  //   // await this.userScoreService.reduceNoneSubmitScore(
+  //   //   contributorsToRevoke.map((c) => c.contributor_id),
+  //   //   queryRunner,
+  //   // );
+  // }
 
   /**
    * Re-distributes micro-tasks among contributors for a gender-based task allocation.
@@ -401,176 +451,205 @@ export class TaskRedistributionService {
    * - Reduce contributors who don't done their assigned task on time
    * - Persists the final assignments and updates micro-task statistics using the relevant services.
    */
-  async reDistributeTaskGenderBased(
-    existingAssignments: ContributorMicroTasks[],
-    newContributorIds: { id: string; gender: string; score: number }[],
+  // async reDistributeTaskGenderBased(
+  //   existingAssignments: ContributorMicroTasks[],
+  //   newContributorIds: { id: string; gender: string; score: number }[],
+  //   taskId: string,
+  //   microTaskStats: MicroTaskStatistics[],
+  //   maxPerContributor: number,
+  //   maxContributorsPerMicroTask: number,
+  //   batch: number,
+  //   taskRequirement: TaskRequirement,
+  //   queryRunner: QueryRunner,
+  //   maxWaitingHours?: number,
+  // ): Promise<void> {
+  //   const deadline = maxWaitingHours
+  //     ? new Date(Date.now() + maxWaitingHours * 60 * 60 * 1000)
+  //     : undefined;
+  //   // Filter unfinished microtasks
+  //   const undoneMicroTasks = microTaskStats.filter(
+  //     (stat) => stat.no_of_contributors < stat.expected_no_of_contributors,
+  //   );
+  //   const male_percent_required =
+  //     (taskRequirement.gender.male / 100) * maxContributorsPerMicroTask;
+  //   const female_percent_required =
+  //     (taskRequirement.gender.female / 100) * maxContributorsPerMicroTask;
+
+  //   const { contributor_micro_tasks, micro_task_statistics } =
+  //     distributeTaskAmongNewContributorsGenderBased(
+  //       newContributorIds,
+  //       undoneMicroTasks,
+  //       taskId,
+  //       maxPerContributor,
+  //       maxContributorsPerMicroTask,
+  //       batch,
+  //       male_percent_required,
+  //       female_percent_required,
+  //       deadline,
+  //     );
+
+  //   // Revoke assignments below threshold
+  //   for (const assignment of contributor_micro_tasks) {
+  //     if (assignment.total_micro_tasks < batch) {
+  //       for (const microTaskId of assignment.micro_task_ids) {
+  //         const stat = micro_task_statistics.find(
+  //           (s) => s.micro_task_id === microTaskId,
+  //         );
+  //         if (stat) {
+  //           stat.no_of_contributors--;
+  //           if (assignment.gender == 'Male') {
+  //             stat.total_male--;
+  //           } else if (assignment.gender == 'Female') {
+  //             stat.total_female--;
+  //           }
+  //         }
+  //       }
+  //       assignment.micro_task_ids = [];
+  //     }
+  //   }
+  //   // contributors with no task
+  //   // Filter contributors with actual assignments
+  //   const validNewAssignments = contributor_micro_tasks.filter(
+  //     (c) => c.micro_task_ids.length > 0,
+  //   );
+  //   const invalidNewAssignments = contributor_micro_tasks.filter(
+  //     (c) => c.micro_task_ids.length === 0,
+  //   );
+  //   // Find reusable contributors (who didn't start their task)
+  //   const reusableContributors = existingAssignments.filter(
+  //     (c) =>
+  //       c.status === ContributorMicroTasksConstantStatus.NEW &&
+  //       c.dead_line >= new Date(),
+  //   );
+  //   // removable contributors
+  //   const contributorsToRevoke: { contributor_id: string; task_id: string }[] =
+  //     [];
+  //   for (
+  //     let i = 0;
+  //     i < invalidNewAssignments.length && i < reusableContributors.length;
+  //     i++
+  //   ) {
+  //     const reusable = reusableContributors[i];
+  //     const assignment = invalidNewAssignments[i];
+  //     const startIdx = Math.min(
+  //       reusable.current_batch,
+  //       reusable.micro_task_ids.length,
+  //     );
+  //     const reassignedMicroTasks = reusable.micro_task_ids.slice(startIdx);
+  //     if (reassignedMicroTasks.length === 0) continue;
+
+  //     if (reusable.gender == assignment.gender) {
+  //       assignment.micro_task_ids = reassignedMicroTasks;
+  //       assignment.status = ContributorMicroTasksConstantStatus.NEW;
+  //       assignment.total_micro_tasks = reassignedMicroTasks.length;
+  //       assignment.batch = reusable.batch;
+  //       assignment.dead_line = deadline;
+
+  //       contributorsToRevoke.push({
+  //         contributor_id: reusable.contributor_id,
+  //         task_id: taskId,
+  //       });
+  //     }
+  //   }
+  //   // filter contributors_with_no_task
+  //   const revokedAndAssignedAssignments = invalidNewAssignments.filter(
+  //     (c) => c.micro_task_ids.length > 0,
+  //   );
+
+  //   // Remove the contributors
+  //   // Remove revoked contributors from original list
+  //   const remainingAssignments = existingAssignments.filter(
+  //     (c) =>
+  //       !contributorsToRevoke.find(
+  //         (r) => r.contributor_id === c.contributor_id,
+  //       ),
+  //   );
+  //   // update the deadline for the remaining assignments
+  //   if (deadline) {
+  //     remainingAssignments.forEach((c) => {
+  //       c.dead_line = deadline;
+  //     });
+  //   }
+
+  //   //  The new built array
+  //   // Build final list
+  //   const validNewAssignmentWithGender = validNewAssignments.map((c) => ({
+  //     micro_task_ids: c.micro_task_ids,
+  //     status: c.status,
+  //     gender: c.contributor_id.gender,
+  //     total_micro_tasks: c.total_micro_tasks,
+  //     batch: c.batch,
+  //     dead_line: c.dead_line,
+  //     contributor_id: c.contributor_id.id,
+  //   }));
+  //   const revokedAndAssignedAssignmentsWithGender =
+  //     revokedAndAssignedAssignments.map((c) => ({
+  //       micro_task_ids: c.micro_task_ids,
+  //       status: c.status,
+  //       gender: c.contributor_id.gender,
+  //       total_micro_tasks: c.total_micro_tasks,
+  //       batch: c.batch,
+  //       dead_line: c.dead_line,
+  //       contributor_id: c.contributor_id.id,
+  //     }));
+  //   const finalAssignments: Partial<ContributorMicroTasks>[] = [
+  //     ...remainingAssignments,
+  //     ...validNewAssignmentWithGender,
+  //     ...revokedAndAssignedAssignmentsWithGender,
+  //   ].map((c) => ({
+  //     ...c,
+  //     expected_micro_task_for_contributor: maxPerContributor,
+  //     task_id: taskId,
+  //   }));
+
+  //   // Update or Insert the updated Contributed List
+  //   // Persist data
+  //   await this.contributorMicroTaskService.upsertMany(
+  //     finalAssignments,
+  //     queryRunner,
+  //   );
+  //   await this.microTaskStatisticsService.upsertMany(
+  //     microTaskStats,
+  //     queryRunner,
+  //   );
+  //   await this.contributorMicroTaskService.expireAll(
+  //     contributorsToRevoke,
+  //     queryRunner,
+  //   );
+  //   await this.userScoreService.reduceNoneSubmitScore(
+  //     contributorsToRevoke.map((c) => c.contributor_id),
+  //     queryRunner,
+  //   );
+  //   return;
+  // }
+
+  private async getTotalSubmissionsOfAContributorPerTask(
     taskId: string,
-    microTaskStats: MicroTaskStatistics[],
-    maxPerContributor: number,
-    maxContributorsPerMicroTask: number,
-    batch: number,
-    taskRequirement: TaskRequirement,
-    queryRunner: QueryRunner,
-    maxWaitingHours?: number,
-  ): Promise<void> {
-    const deadline = maxWaitingHours
-      ? new Date(Date.now() + maxWaitingHours * 60 * 60 * 1000)
-      : undefined;
-    const percentRequired = 0.5; // Assumed value — adjust as needed
-    // Filter unfinished microtasks
-    const undoneMicroTasks = microTaskStats.filter(
-      (stat) => stat.no_of_contributors < stat.expected_no_of_contributors,
-    );
-    const male_percent_required =
-      (taskRequirement.gender.male / 100) * maxContributorsPerMicroTask;
-    const female_percent_required =
-      (taskRequirement.gender.female / 100) * maxContributorsPerMicroTask;
-
-    const { contributor_micro_tasks, micro_task_statistics } =
-      distributeTaskAmongNewContributorsGenderBased(
-        newContributorIds,
-        undoneMicroTasks,
-        taskId,
-        maxPerContributor,
-        maxContributorsPerMicroTask,
-        batch,
-        male_percent_required,
-        female_percent_required,
-        deadline,
-      );
-
-    // Revoke assignments below threshold
-    for (const assignment of contributor_micro_tasks) {
-      if (assignment.total_micro_tasks < percentRequired * maxPerContributor) {
-        for (const microTaskId of assignment.micro_task_ids) {
-          const stat = micro_task_statistics.find(
-            (s) => s.micro_task_id === microTaskId,
-          );
-          if (stat) {
-            stat.no_of_contributors--;
-            if (assignment.gender == 'Male') {
-              stat.total_male--;
-            } else if (assignment.gender == 'Female') {
-              stat.total_female--;
-            }
-          }
-        }
-        assignment.micro_task_ids = [];
-      }
+    contributorIds: string[],
+  ): Promise<{
+      contributor_id: string, 
+      submission_count: string
+    }[]> {
+    if (contributorIds.length === 0) {
+      return [];
     }
-    // contributors with no task
-    // Filter contributors with actual assignments
-    const validNewAssignments = contributor_micro_tasks.filter(
-      (c) => c.micro_task_ids.length > 0,
-    );
-    const invalidNewAssignments = contributor_micro_tasks.filter(
-      (c) => c.micro_task_ids.length === 0,
-    );
-    // Find reusable contributors (who didn't start their task)
-    const reusableContributors = existingAssignments.filter(
-      (c) =>
-        c.status === ContributorMicroTasksConstantStatus.NEW &&
-        c.dead_line >= new Date(),
-    );
-    // removable contributors
-    const contributorsToRevoke: { contributor_id: string; task_id: string }[] =
-      [];
-    for (
-      let i = 0;
-      i < invalidNewAssignments.length && i < reusableContributors.length;
-      i++
-    ) {
-      const reusable = reusableContributors[i];
-      const assignment = invalidNewAssignments[i];
-      const startIdx = Math.min(
-        reusable.current_batch,
-        reusable.micro_task_ids.length,
-      );
-      const reassignedMicroTasks = reusable.micro_task_ids.slice(startIdx);
-      if (reassignedMicroTasks.length === 0) continue;
-
-      if (reusable.gender == assignment.gender) {
-        assignment.micro_task_ids = reassignedMicroTasks;
-        assignment.status = ContributorMicroTasksConstantStatus.NEW;
-        assignment.total_micro_tasks = reassignedMicroTasks.length;
-        assignment.batch = reusable.batch;
-        assignment.dead_line = deadline;
-
-        contributorsToRevoke.push({
-          contributor_id: reusable.contributor_id,
-          task_id: taskId,
-        });
-      }
-    }
-    // filter contributors_with_no_task
-    const revokedAndAssignedAssignments = invalidNewAssignments.filter(
-      (c) => c.micro_task_ids.length > 0,
-    );
-
-    // Remove the contributors
-    // Remove revoked contributors from original list
-    const remainingAssignments = existingAssignments.filter(
-      (c) =>
-        !contributorsToRevoke.find(
-          (r) => r.contributor_id === c.contributor_id,
-        ),
-    );
-    // update the deadline for the remaining assignments
-    if (deadline) {
-      remainingAssignments.forEach((c) => {
-        c.dead_line = deadline;
-      });
-    }
-
-    //  The new built array
-    // Build final list
-    const validNewAssignmentWithGender = validNewAssignments.map((c) => ({
-      micro_task_ids: c.micro_task_ids,
-      status: c.status,
-      gender: c.contributor_id.gender,
-      total_micro_tasks: c.total_micro_tasks,
-      batch: c.batch,
-      dead_line: c.dead_line,
-      contributor_id: c.contributor_id.id,
-    }));
-    const revokedAndAssignedAssignmentsWithGender =
-      revokedAndAssignedAssignments.map((c) => ({
-        micro_task_ids: c.micro_task_ids,
-        status: c.status,
-        gender: c.contributor_id.gender,
-        total_micro_tasks: c.total_micro_tasks,
-        batch: c.batch,
-        dead_line: c.dead_line,
-        contributor_id: c.contributor_id.id,
-      }));
-    const finalAssignments: Partial<ContributorMicroTasks>[] = [
-      ...remainingAssignments,
-      ...validNewAssignmentWithGender,
-      ...revokedAndAssignedAssignmentsWithGender,
-    ].map((c) => ({
-      ...c,
-      expected_micro_task_for_contributor: maxPerContributor,
-      task_id: taskId,
-    }));
-
-    // Update or Insert the updated Contributed List
-    // Persist data
-    await this.contributorMicroTaskService.upsertMany(
-      finalAssignments,
-      queryRunner,
-    );
-    await this.microTaskStatisticsService.upsertMany(
-      microTaskStats,
-      queryRunner,
-    );
-    await this.contributorMicroTaskService.expireAll(
-      contributorsToRevoke,
-      queryRunner,
-    );
-    await this.userScoreService.reduceNoneSubmitScore(
-      contributorsToRevoke.map((c) => c.contributor_id),
-      queryRunner,
-    );
-    return;
+    const result = await this.dataSource.getRepository(User)
+  .createQueryBuilder('u')
+  .leftJoin(
+    'u.contributes',
+    'ds',
+    'ds.is_draft = false AND ds.micro_task_id IS NOT NULL'
+  )
+  .leftJoin('ds.microTask', 'mt', 'mt.task_id = :taskId AND mt.is_test = false', { taskId })
+  .select('u.id', 'contributor_id')
+  .addSelect(
+    'COUNT(DISTINCT CASE WHEN mt.task_id = :taskId AND mt.is_test = false THEN ds.micro_task_id END)',
+    'submission_count'
+  )
+  .where('u.id IN (:...contributorIds)', { contributorIds })
+  .groupBy('u.id')
+  .setParameter('taskId', taskId)
+  .getRawMany();
+    return result;
   }
 }

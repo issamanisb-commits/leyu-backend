@@ -89,7 +89,7 @@ export class MicroTaskStatisticsService {
     const groupedStatistics: MicroTaskStatisiticsByStatus = {
       NOT_ASSIGNED: 0,
       PARTILALLY_ASSIGNED: 0,
-      ASSIGNED: 0,
+      ASSIGNED: 0
     };
     statistics.forEach((stat) => {
       if (stat.no_of_contributors === 0) {
@@ -130,4 +130,54 @@ export class MicroTaskStatisticsService {
         .getManyAndCount();
     return paginate(microTaskStatistics, count, page, limit);
   }
+  async reduceAssignmentForExpiredTasks(
+  removeables: { 
+    micro_task_id: string; 
+    no_of_assignments: number,
+    no_of_male: number | undefined,
+    no_of_female: number | undefined
+  }[],
+): Promise<void> {
+  if (removeables.length === 0) return;
+
+  const ids = removeables.map((item) => `'${item.micro_task_id}'`).join(', ');
+
+  const contributorCases = removeables
+    .map(
+      (item) =>
+        `WHEN micro_task_id = '${item.micro_task_id}' THEN GREATEST(no_of_contributors - ${item.no_of_assignments}, 0)`,
+    )
+    .join(' ');
+
+  const maleCases = removeables
+    .filter((item) => item.no_of_male !== undefined)
+    .map(
+      (item) =>
+        `WHEN micro_task_id = '${item.micro_task_id}' THEN GREATEST(COALESCE(total_male, 0) - ${item.no_of_male}, 0)`,
+    )
+    .join(' ');
+
+  const femaleCases = removeables
+    .filter((item) => item.no_of_female !== undefined)
+    .map(
+      (item) =>
+        `WHEN micro_task_id = '${item.micro_task_id}' THEN GREATEST(COALESCE(total_female, 0) - ${item.no_of_female}, 0)`,
+    )
+    .join(' ');
+
+  await this.microTaskStatisticsRepository
+    .createQueryBuilder()
+    .update(MicroTaskStatistics)
+    .set({
+      no_of_contributors: () => `CASE ${contributorCases} ELSE no_of_contributors END`,
+      ...(maleCases && {
+        total_male: () => `CASE ${maleCases} ELSE total_male END`,
+      }),
+      ...(femaleCases && {
+        total_female: () => `CASE ${femaleCases} ELSE total_female END`,
+      }),
+    })
+    .where(`micro_task_id IN (${ids})`)
+    .execute();
+}
 }

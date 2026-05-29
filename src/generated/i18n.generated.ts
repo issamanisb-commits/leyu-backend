@@ -10,6 +10,28 @@ export type I18nTranslations = {
         "new_task_notification_message": string;
         "task_rejected_notification_title": string;
         "task_rejected_notification_message": string;
+        "halfway_reminder_notification_title": string;
+        "halfway_reminder_notification_message": string;
+        "final_warning_notification_title": string;
+        "final_warning_notification_message": string;
+        "password_change_notification_title": string;
+        "password_change_notification_message": string;
+        "account_lockout_notification_title": string;
+        "account_lockout_notification_message": string;
+        "daily_inactivity_notification_title": string;
+        "daily_inactivity_notification_message": string;
+        "re_engagement_notification_title": string;
+        "re_engagement_notification_message": string;
+        "withdrawal_success_notification_title": string;
+        "withdrawal_success_notification_message": string;
+        "withdrawal_failed_notification_title": string;
+        "withdrawal_failed_notification_message": string;
+        "reviewer_new_batch_notification_title": string;
+        "reviewer_new_batch_notification_message": string;
+        "reviewer_queue_limit_notification_title": string;
+        "reviewer_queue_limit_notification_message": string;
+        "new_sign_up_title": string;
+        "new_sign_up_message": string;
     };
     "errors": {
         "INTERNAL_SERVER_ERROR": string;

@@ -323,19 +323,36 @@ export class TaskDistributionController {
       throw new BadRequestException('At least one file is required');
     }
 
+    console.log("Request body ",req.body);
     const submissions: {
       micro_task_id: string;
       file_path: string;
       audio_duration: any;
     }[] = [];
-    let { is_test } = req.body; // Get batch from request body, default to false
-    is_test = is_test === 'true' || is_test === true; // Convert to boolean
+    let { is_test, audio_duration } = req.body;
+    is_test = is_test === 'true' || is_test === true;
+    
+    // Parse audio_duration[micro_task_id] fields sent by the Dart client
+    // Dart sends: audio_duration[some-uuid] = "1.23"
+    const durationMap: Record<string, number> = {};
+    if(req.body.audio_duration){
+      for (const [key, value] of Object.entries(req.body.audio_duration as Record<string, string>)) {
+        const match = key.match(/^audio_duration\[(.+)\]$/);
+        // if (match) {
+          const microTaskId = key;
+          const parsed = parseFloat(value);
+          durationMap[microTaskId] = isNaN(parsed) ? 0 : parsed;
+        // }
+      } 
+    }
+    
+
     try {
       for (const file of files) {
         submissions.push({
           micro_task_id: file.fieldname,
-          file_path: '', //  file.key, // Use the file key as the file path
-          audio_duration: await this.audioService.getAudioDuration(file.path),
+          file_path: '',
+          audio_duration: durationMap[file.fieldname] ?? 0
         });
       }
       const data_Sets =
@@ -368,7 +385,7 @@ export class TaskDistributionController {
           },
         );
       }
-      return data_Sets;
+      return submissions;
     } catch (error) {
       await Promise.all(
         files.map(async (file) => {

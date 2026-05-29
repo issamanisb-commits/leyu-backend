@@ -7,7 +7,7 @@ import {
   Request,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiQuery, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/guard/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guard/role.guard';
 import { Roles } from 'src/auth/decorators/roles.decorator';
@@ -63,6 +63,7 @@ export class ProjectStatisticsController {
   }
 
   @Get('task-dataset/:task_id')
+  @ApiParam({ name: 'task_id' })
   async getTaskDatasetStatistics(
     @Param('task_id') task_id,
     @Query() taskDto: TaskStatisticsDto,

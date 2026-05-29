@@ -1,6 +1,38 @@
 {
-    "new_task_notification_title":"New Task Assigned",
-    "new_task_notification_message":"You have been assigned a new task: {taskTitle}. Please check your dashboard for details.",
-    "task_rejected_notification_title":"Task Rejected",
-    "task_rejected_notification_message":"Your submission with code: { taskCode} on task: {taskTitle} has been rejected. Please try again."
+  "new_task_notification_title": "New Task Assigned",
+  "new_task_notification_message": "A new {taskTitle} is ready for you, complete it to earn more and keep your progress growing!",
+  "task_rejected_notification_title": "Action Required",
+  "task_rejected_notification_message": "Your task on {taskTitle} wasn't accepted this time, but you still have retries left. Tap to check the feedback and give it another shot!",
+
+  "halfway_reminder_notification_title": "Checking in!",
+  "halfway_reminder_notification_message": "You're halfway to your deadline on {taskTitle}. Don't forget to complete your contribution to ensure you get paid!",
+
+  "final_warning_notification_title": "24 Hours Remaining",
+  "final_warning_notification_message": "Your task {taskTitle} expires in one day. Don't let your progress go to wastefinish and submit it now!",
+
+  "password_change_notification_title": "Security Alert",
+  "password_change_notification_message": "Your password was recently changed. If this wasn't you, please contact support.",
+
+  "account_lockout_notification_title": "Account Locked",
+  "account_lockout_notification_message": "Too many failed login attempts. Your account is locked for 15 minutes for your safety.",
+
+  "daily_inactivity_notification_title": "Don't miss out!",
+  "daily_inactivity_notification_message": "You haven't completed any tasks today. Log in now to turn your spare time into earnings!",
+
+  "re_engagement_notification_title": "We miss your voice!",
+  "re_engagement_notification_message": "New scripts are waiting for your contribution. Come back and see what's new in the dashboard.",
+
+  "withdrawal_success_notification_title": "Withdrawal Success",
+  "withdrawal_success_notification_message": "Success! {amount} has been sent to your account. Keep contributing to earn more!",
+
+  "withdrawal_failed_notification_title": "Payout Failed",
+  "withdrawal_failed_notification_message": "We couldn't process your withdrawal. Tap to check your payment details and try again.",
+
+  "reviewer_new_batch_notification_title": "New Tasks to Review",
+  "reviewer_new_batch_notification_message": "A new batch of {taskType} is ready for quality check. Stay on top of your queue!",
+
+  "reviewer_queue_limit_notification_title": "Unreviewed Task Alert",
+  "reviewer_queue_limit_notification_message": "Your review queue is piling up! {count} tasks are waiting for your approval.",
+  "new_sign_up_title": "New Referral!",
+  "new_sign_up_message": "A new contributor has joined your team using your referral code."
 }

@@ -52,17 +52,15 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - "3001:3001"
     restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      RABBITMQ_URI: amqp://guest:guest@rabbitmq:5672
+    env_file:
+      - .env
     networks:
       - backend_network
 volumes:

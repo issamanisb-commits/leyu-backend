@@ -19,10 +19,11 @@ import { FindReviewerDataSetDto } from 'src/data_set/dto/DataSet.dto';
 import { DataSetService } from 'src/data_set/service/DataSet.service';
 import { TaskService } from 'src/project/service/Task.service';
 import { TaskDataSetReviewerDistributionRto } from '../rto/TaskMonitoring.rto';
-import { taskTypes } from 'src/utils/constants/Task.constant';
+import { taskTypes, UserTaskStatus } from 'src/utils/constants/Task.constant';
 import { UserTaskService } from 'src/project/service/UserTask.service';
 import { FileService } from 'src/common/service/File.service';
 import { RejectionReasonService } from 'src/data_set/service/RejectionReason.service';
+import { FlagReasonService } from 'src/data_set/service/FlagReason.service';
 import { DataSetAnnotationService } from 'src/base_data/service/DataSetAnnotation.service';
 import { Task } from 'src/project/entities/Task.entity';
 import { PaginationDto } from 'src/common/dto/Pagination.dto';
@@ -34,6 +35,7 @@ import { DataSetDetailRto } from 'src/data_set/rto/DataSet.rto';
 export class DataSetWithReviewInfo extends DataSet {
   data_set_review_id: string;
   review_status: string;
+  dead_line:Date
 }
 @Injectable()
 export class ReviewerTaskService {
@@ -47,6 +49,7 @@ export class ReviewerTaskService {
     private readonly userTaskService: UserTaskService,
     private readonly fileService: FileService,
     private readonly rejectionService: RejectionReasonService,
+    private readonly flagReasonService: FlagReasonService,
     private readonly dataSetAnnotationService: DataSetAnnotationService,
   ) {}
   async getReviewerTaskAssignments(
@@ -109,6 +112,7 @@ export class ReviewerTaskService {
         ...t.dataSet,
         data_set_review_id: t.id,
         review_status: t.status,
+        dead_line:t.expires_at
       })),
       total,
       page,
@@ -135,15 +139,19 @@ export class ReviewerTaskService {
     user_id: string,
     query: FindReviewerDataSetDto,
   ): Promise<PaginatedResult<DataSetWithReviewInfo>> {
-    const userTask = await this.userTaskService.findOne({
-      where: { user_id: user_id, task_id: task_id },
-      relations: { user: true, task: { taskType: true } },
+    // const userTask = await this.userTaskService.findOne({
+    //   where: { user_id: user_id, task_id: task_id },
+    //   relations: { user: true, task: { taskType: true } },
+    // });
+    // if (!userTask) {
+    //   throw new UnauthorizedException(`User is not assigned to the task`);
+    // }
+    const task= await this.taskService.findOne({
+      where: { id: task_id },
+      relations: { taskType: true },
     });
-    if (!userTask) {
-      throw new UnauthorizedException(`User is not assigned to the task`);
-    }
     const reviewerId = user_id;
-    const task = userTask.task;
+    // const task = .task;
     // const
     // get datasets from redis if exists
     const dataSets = await this.getReviewerTaskAssignments(
@@ -197,6 +205,8 @@ export class ReviewerTaskService {
     queryRunner: QueryRunner,
     is_flagged?: boolean,
     comment?: string,
+    flag_type_ids?: string[],
+    is_uncertain?: boolean,
   ): Promise<string> {
     const manager = queryRunner.manager;
     const dataSetReview = await manager.findOne(DataSetReview, {
@@ -210,9 +220,19 @@ export class ReviewerTaskService {
     if (dataSetReview.status !== 'pending') {
       throw new BadRequestException('data set already rejected');
     }
+    const membership=await this.userTaskService.findOne({
+      where:{user_id: reviewerId, task_id:dataSetReview.task_id},
+    })
+    if(!membership){
+      throw new UnauthorizedException("Reviewer is no longer actively assigned to the task");
+    }
+    if (membership.status !== UserTaskStatus.ACTIVE) {
+      throw new UnauthorizedException("Reviewer is no longer actively assigned to the task");
+    }
     await manager.update(DataSetReview, dataSetReviewId, {
       status: 'rejected',
       is_flagged: is_flagged ? true : false,
+      is_uncertain: is_uncertain ? true : false,
       reviewed_at: now,
       comment: comment,
     });
@@ -223,6 +243,16 @@ export class ReviewerTaskService {
       })),
       queryRunner,
     );
+    if (flag_type_ids?.length) {
+      await this.flagReasonService.createBulk(
+        flag_type_ids.map((flag_type_id) => ({
+          data_set_id: dataSetReview.data_set_id,
+          data_set_review_id: dataSetReviewId,
+          flag_type_id,
+        })),
+        queryRunner,
+      );
+    }
     return 'DataSet Rejected Successfully';
   }
 
@@ -242,7 +272,9 @@ export class ReviewerTaskService {
     reviewerId: string,
     queryRunner: QueryRunner,
     annotationIds?: string[],
+    is_uncertain?: boolean,
   ): Promise<void> {
+    
     const manager = queryRunner.manager;
 
     const dataSetReview = await manager.findOne(DataSetReview, {
@@ -260,10 +292,21 @@ export class ReviewerTaskService {
       throw new BadRequestException('data set already rejected');
     }
 
+    const membership=await this.userTaskService.findOne({
+      where:{user_id: reviewerId, task_id:dataSetReview.task_id},
+    })
+    if(!membership){
+      throw new UnauthorizedException("Reviewer is no longer actively assigned to the task");
+    }
+    if (membership.status !== UserTaskStatus.ACTIVE) {
+      throw new UnauthorizedException("Reviewer is no longer actively assigned to the task");
+    }
+
     // update normal columns
     await manager.update(DataSetReview, dataSetReviewId, {
       status: 'approved',
       reviewed_at: now,
+      is_uncertain: is_uncertain ? true : false,
     });
 
     // attach annotations
@@ -313,6 +356,7 @@ export class ReviewerTaskService {
     queryRunner: QueryRunner,
     is_flagged?: boolean,
     comment?: string,
+    is_uncertain?: boolean,
   ): Promise<string> {
     const manager = queryRunner.manager;
     const dataSet = await this.dataSetService.findOne({
@@ -335,6 +379,7 @@ export class ReviewerTaskService {
       reviewer_id: reviewerId,
       status: 'rejected',
       is_flagged: is_flagged ? true : false,
+      is_uncertain: is_uncertain ? true : false,
       reviewed_at: now,
       expires_at: now,
       comment: comment,
@@ -413,6 +458,7 @@ export class ReviewerTaskService {
     queryRunner: QueryRunner,
     is_flagged?: boolean,
     comment?: string,
+    is_uncertain?: boolean,
   ): Promise<string> {
     const manager = queryRunner.manager;
     const dataSet = await this.dataSetService.findOne({
@@ -441,6 +487,7 @@ export class ReviewerTaskService {
       reviewer_id: reviewerId,
       status: 'rejected',
       is_flagged: is_flagged ? true : false,
+      is_uncertain: is_uncertain ? true : false,
       reviewed_at: now,
       expires_at: now,
       comment: comment,
@@ -558,4 +605,29 @@ export class ReviewerTaskService {
   ): Promise<PaginatedResult<DataSetDetailRto>> {
     return this.dataSetService.getReviewDataSetsForQA(taskId, payload);
   }
+  async getOverloadedReviewers(limit = 50): Promise<{ reviewer_id: string; email: string; preferred_language: string; queue_count: number }[]> {
+    const overloaded = await this.dataSetReviewRepository
+      .createQueryBuilder('review')
+      .select('review.reviewer_id', 'reviewer_id')
+      
+      .addSelect('user.email', 'email')
+      .addSelect('user.preferred_language', 'preferred_language')
+      .addSelect('COUNT(review.id)', 'queue_count')
+      .innerJoin('review.reviewer', 'user')
+      .where('review.status = :status', { status: 'pending' })
+      .andWhere('review.is_expired = :isExpired', { isExpired: false })
+      .andWhere('review.expires_at > :now', { now: new Date() })
+      .groupBy('review.reviewer_id')
+      .addGroupBy('user.email')
+      .addGroupBy('user.preferred_language')
+      .having('COUNT(review.id) > :limit', { limit })
+      .getRawMany();
+
+    return overloaded.map((r) => ({
+      reviewer_id: r.reviewer_id,
+      email: r.email,
+      preferred_language: r.preferred_language,
+      queue_count: Number(r.queue_count),
+    }));
+}
 }

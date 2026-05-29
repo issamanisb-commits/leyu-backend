@@ -40,7 +40,7 @@ export class Wallet {
   @Column({})
   user_id: string;
 
-  // HMAC-SHA256 of "balance:held_balance" — verified before every write (Requirement 4.x)
+  // HMAC-SHA256 of "balance:held_balance"  verified before every write (Requirement 4.x)
   @Column({ nullable: true })
   integrity_hash: string;
 }

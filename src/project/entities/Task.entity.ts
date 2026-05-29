@@ -19,7 +19,6 @@ import { TaskPayment } from 'src/project/entities/TaskPayment.entity';
 import { TaskRequirement } from './TaskRequirement.entity';
 import { InvitationLink } from './InvitationLink.entity';
 import { FacilitatorContributor } from './FacilitatorContributor.entity';
-import { ReviewerTasks } from 'src/task_distribution/enitities/ReviewerTasks.entity';
 import { QATaskInstruction } from './QATaskInstruction.entity';
 import { ReviewerTaskInstruction } from './ReviewerTaskInstruction.entity';
 
@@ -131,6 +130,4 @@ export class Task {
   @OneToMany(() => InvitationLink, (invitationLink) => invitationLink.task)
   invitationLinks: InvitationLink[];
 
-  @OneToMany(() => ReviewerTasks, (reviewerTasks) => reviewerTasks.task)
-  reviewerTasks: ReviewerTasks[];
 }

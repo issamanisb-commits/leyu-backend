@@ -11,6 +11,7 @@ import { RolesGuard } from 'src/auth/guard/role.guard';
 import { NotificationService } from '../service/Notification.service';
 import { IsEnum, IsString } from 'class-validator';
 import { PublisherService } from '../service/RabbitPublish.service';
+import { NotificationType } from '../entities/Notifaction.entity';
 export class CreateNotificationDto {
   @ApiProperty()
   @IsString()
@@ -20,11 +21,7 @@ export class CreateNotificationDto {
     ['task-assign', 'task-invitation', 'task-rejected', 'task-approved'],
     { each: true },
   )
-  notificationType:
-    | 'task-assign'
-    | 'task-invitation'
-    | 'task-rejected'
-    | 'task-approved';
+  notificationType:NotificationType;
   @ApiProperty()
   @IsString()
   displayName: string;

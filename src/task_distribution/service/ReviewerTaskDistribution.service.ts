@@ -1,6 +1,6 @@
 import { InjectRepository } from '@nestjs/typeorm';
 // import { ReviewerTasks } from '../enitities/ReviewerTasks.entity';
-import { Brackets, DataSource, Repository } from 'typeorm';
+import { Brackets, DataSource, In, Repository } from 'typeorm';
 import { Injectable } from '@nestjs/common';
 import { DataSetReview } from '../enitities/DataSetReview.entity';
 import { TaskService } from 'src/project/service/Task.service';
@@ -11,7 +11,9 @@ import { PaginationDto } from 'src/common/dto/Pagination.dto';
 import { paginate, PaginatedResult } from 'src/utils/paginate.util';
 import { TaskReviewersProgressRto } from '../rto/TaskMonitoring.rto';
 import { CacheService } from 'src/cache/CacheService.service';
-
+import { UserService } from 'src/auth/service/User.service';
+import { I18nService } from 'nestjs-i18n';
+import { NotificationService } from 'src/common/service/Notification.service';
 // You can also create a DTO if you want to shape the output more strictly
 interface DataSetListItemDto {
   id: string;
@@ -25,7 +27,7 @@ interface DataSetListItemDto {
     reviewer: { id: string };
     status: 'pending' | 'approved' | 'rejected';
     expires_at: Date;
-    assigned_at: Date; // note: was boolean in your entity — probably typo?
+    assigned_at: Date; // note: was boolean in your entity  probably typo?
   }>;
 }
 @Injectable()
@@ -35,7 +37,10 @@ export class ReviewerTaskDistributionsService {
     private readonly dataSetReviewRepository: Repository<DataSetReview>,
     private readonly dataSource: DataSource,
     private readonly taskService: TaskService,
+    private readonly userService: UserService,
     private readonly cacheService: CacheService,
+    private readonly i18n: I18nService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async distributeTaskDataSets(taskId: string) {
@@ -63,7 +68,7 @@ export class ReviewerTaskDistributionsService {
     const reviewTimeLimit = task?.reviewer_completion_time_limit || 48;
     const MAX_REVIEWER_PER_DATASET =
       task?.taskRequirement.max_reviewer_per_dataset || 1;
-    const assignments = await this.assignDatasetsForReview(
+    const assignments = await this.assignDatasetsForReviewV2(
       reviewTimeLimit,
       MAX_REVIEWER_PER_DATASET,
       maxDataSetPerReviewer,
@@ -81,6 +86,34 @@ export class ReviewerTaskDistributionsService {
     await this.dataSetReviewRepository.save(dataSetReviews);
 
     await this.cacheService.del(key);
+    const distinctReviewerIds = [
+      ...new Set(dataSetReviews.map((r) => r.reviewer_id)),
+    ];
+    const user = await this.userService.findMany({
+      where: { id: In(distinctReviewerIds) },
+    });
+    await Promise.all(
+      distinctReviewerIds.map(async (reviewerId) => {
+        const reviewer = user.find((u) => u.id == reviewerId);
+        const title =
+          this.i18n.t('common.reviewer_new_batch_notification_title', {
+            lang: reviewer?.preferred_language || 'en',
+          }) || '';
+        const message =
+          this.i18n.t('common.reviewer_new_batch_notification_message', {
+            lang: reviewer?.preferred_language || 'en',
+            args: { taskType: task?.name },
+          }) || '';
+        await this.notificationService.create({
+          user_id: reviewerId,
+          title,
+          message,
+          type: 'reviewer-batch-assigned',
+          target: 'email',
+          email: reviewer?.email,
+        });
+      }),
+    );
     return dataSetReviews;
   }
   async findPendingSubmissionsWithReviewCount(
@@ -240,68 +273,154 @@ export class ReviewerTaskDistributionsService {
       expiresAt: Date;
     }[]
   > {
-    const reviewerLoad = new Map<string, number>();
-    reviewersWithAssignment.forEach((r) =>
-      reviewerLoad.set(r.reviewerId, r.assignmentCount),
+    // ── in-memory load tracker (avoids mutating the original array) ──────────
+    const reviewerLoad = new Map<string, number>(
+      reviewersWithAssignment.map((r) => [r.reviewerId, r.assignmentCount]),
     );
 
-    // Sort reviewers by current load ascending to balance assignments
-    const sortedReviewers = [...reviewersWithAssignment].sort(
-      (a, b) => a.assignmentCount - b.assignmentCount,
-    );
-
-    // Change the order of reviewers randomly
-    shuffle(sortedReviewers);
-    // sort by score descending
-    sortedReviewers.sort((a, b) => b.score - a.score);
-
-    // Exit function early if there are no pending datasets
-    const newAssignments: Array<{
+    const newAssignments: {
       datasetId: string;
       reviewerId: string;
       status: 'PENDING';
       assignedAt: Date;
       expiresAt: Date;
-    }> = [];
+    }[] = [];
 
     for (const dataset of pendingDataSets) {
-      // Active reviewers already assigned
       const assignedReviewers = new Set(
-        dataset.dataSetReviews?.map((r) => r.reviewer.id) || [],
+        dataset.dataSetReviews?.map((r) => r.reviewer.id) ?? [],
       );
 
-      // Calculate how many more reviewers needed
       let needed = MAX_REVIEWER_PER_DATASET - assignedReviewers.size;
       if (needed <= 0) continue;
 
-      for (const reviewer of sortedReviewers) {
-        if (needed === 0) break;
+      // ── Build eligible pool for this dataset ────────────────────────────────
+      // Only reviewers who: haven't hit max load AND aren't already on this dataset
+      let eligiblePool = reviewersWithAssignment.filter(
+        (r) =>
+          !assignedReviewers.has(r.reviewerId) &&
+          (reviewerLoad.get(r.reviewerId) ?? 0) < MAX_DATASET_PER_REVIEWER,
+      );
 
-        const currentLoad = reviewerLoad.get(reviewer.reviewerId) ?? 0;
+      while (needed > 0 && eligiblePool.length > 0) {
+        // ── Weighted random pick ─────────────────────────────────────────────
+        // Weight = score + 1 (the +1 ensures reviewers with score=0 still
+        // have a non-zero chance of being selected)
+        const picked = weightedRandomPick(eligiblePool, (r) => r.score + 1);
 
-        // Skip if reviewer reached max capacity
-        if (currentLoad >= MAX_DATASET_PER_REVIEWER) continue;
-
-        // Skip if reviewer already assigned to this dataset
-        if (assignedReviewers.has(reviewer.reviewerId)) continue;
-
-        // Assign
+        // ── Assign ───────────────────────────────────────────────────────────
         newAssignments.push({
           datasetId: dataset.id,
-          reviewerId: reviewer.reviewerId,
+          reviewerId: picked.reviewerId,
           status: 'PENDING',
           assignedAt: new Date(),
           expiresAt: this.getExpiry(expireTime),
         });
-        // Update in-memory trackers
-        assignedReviewers.add(reviewer.reviewerId);
-        reviewerLoad.set(reviewer.reviewerId, currentLoad + 1);
+
+        // ── Update trackers ──────────────────────────────────────────────────
+        const newLoad = (reviewerLoad.get(picked.reviewerId) ?? 0) + 1;
+        reviewerLoad.set(picked.reviewerId, newLoad);
+        assignedReviewers.add(picked.reviewerId);
+
+        // ── Remove from pool if now at capacity or already assigned ──────────
+        eligiblePool = eligiblePool.filter(
+          (r) =>
+            r.reviewerId !== picked.reviewerId ||
+            newLoad < MAX_DATASET_PER_REVIEWER,
+        );
+        // Since we just added them to assignedReviewers, they'll never re-qualify
+        // for this dataset  filter them out cleanly
+        eligiblePool = eligiblePool.filter(
+          (r) => !assignedReviewers.has(r.reviewerId),
+        );
+
         needed--;
       }
     }
+
     return newAssignments;
   }
 
+  private async assignDatasetsForReviewV2(
+    expireTime: number,
+    MAX_REVIEWER_PER_DATASET: number,
+    MAX_DATASET_PER_REVIEWER: number,
+    pendingDataSets: DataSetListItemDto[],
+    reviewersWithAssignment: {
+      reviewerId: string;
+      assignmentCount: number;
+      score: number;
+    }[],
+  ): Promise<
+    {
+      datasetId: string;
+      reviewerId: string;
+      status: 'PENDING';
+      assignedAt: Date;
+      expiresAt: Date;
+    }[]
+  > {
+    // ── In-memory load tracker ───────────────────────────────────────────────
+    const reviewerLoad = new Map<string, number>(
+      reviewersWithAssignment.map((r) => [r.reviewerId, r.assignmentCount]),
+    );
+
+    const newAssignments: {
+      datasetId: string;
+      reviewerId: string;
+      status: 'PENDING';
+      assignedAt: Date;
+      expiresAt: Date;
+    }[] = [];
+
+    // ── Global round-robin cursor (persists across datasets) ─────────────────
+    let cursor = 0;
+
+    for (const dataset of pendingDataSets) {
+      const assignedReviewers = new Set(
+        dataset.dataSetReviews?.map((r) => r.reviewer.id) ?? [],
+      );
+
+      let needed = MAX_REVIEWER_PER_DATASET - assignedReviewers.size;
+      if (needed <= 0) continue;
+
+      // ── Walk the reviewer list starting from where we left off ───────────
+      // We allow at most one full loop to avoid infinite cycling when the
+      // pool is exhausted for this dataset.
+      let attempts = 0;
+      const totalReviewers = reviewersWithAssignment.length;
+
+      while (needed > 0 && attempts < totalReviewers) {
+        const candidate = reviewersWithAssignment[cursor % totalReviewers];
+        cursor++;
+        attempts++;
+
+        const load = reviewerLoad.get(candidate.reviewerId) ?? 0;
+        const isAlreadyAssigned = assignedReviewers.has(candidate.reviewerId);
+        const isAtCapacity = load >= MAX_DATASET_PER_REVIEWER;
+
+        if (isAlreadyAssigned || isAtCapacity) continue;
+
+        // ── Assign ──────────────────────────────────────────────────────────
+        newAssignments.push({
+          datasetId: dataset.id,
+          reviewerId: candidate.reviewerId,
+          status: 'PENDING',
+          assignedAt: new Date(),
+          expiresAt: this.getExpiry(expireTime),
+        });
+
+        reviewerLoad.set(candidate.reviewerId, load + 1);
+        assignedReviewers.add(candidate.reviewerId);
+        needed--;
+      }
+
+      // Note: if needed > 0 here, there weren't enough eligible reviewers
+      // for this dataset. The partial assignments made so far are still kept.
+    }
+
+    return newAssignments;
+  }
   private getExpiry(time: number): Date {
     return new Date(Date.now() + time * 60 * 60 * 1000); // 48h expiry
   }
@@ -374,4 +493,24 @@ function shuffle(
       sortedReviewers[i],
     ];
   }
+}
+/**
+ * Picks one item from an array using weighted random selection.
+ *
+ * Higher weight = higher probability of being picked, but every
+ * item with weight > 0 has a non-zero chance.
+ *
+ * Example: weights [1, 2, 7] → ~10%, ~20%, ~70% pick probability.
+ */
+function weightedRandomPick<T>(items: T[], getWeight: (item: T) => number): T {
+  const totalWeight = items.reduce((sum, item) => sum + getWeight(item), 0);
+  let random = Math.random() * totalWeight;
+
+  for (const item of items) {
+    random -= getWeight(item);
+    if (random <= 0) return item;
+  }
+
+  // Fallback (floating point edge case)
+  return items[items.length - 1];
 }

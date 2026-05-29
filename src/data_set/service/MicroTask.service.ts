@@ -219,15 +219,18 @@ export class MicroTaskService {
     ) {
       throw new BadRequestException(`Invalid task type`);
     }
-    const last_microTask = await this.microTaskRepository.findOne({
-      where: {},
-      order: { code: 'DESC' },
-      select: { code: true },
-    });
+    let secondIndex = 0;
+
     for (const microTask of microTaskData) {
+      const createdDate = new Date();
+      createdDate.setSeconds(createdDate.getSeconds() + secondIndex);
+
       microTask.code = await this.generateCode();
       microTask.task_id = task_id;
       microTask.type = 'text';
+      microTask.created_date = createdDate;
+
+      secondIndex++;
     }
     if (queryRunner) {
       const manager = queryRunner.manager;
@@ -350,22 +353,34 @@ export class MicroTaskService {
     if (!task) {
       throw new NotFoundException(`Task not found`);
     }
-    await Promise.all(
-      microTaskDatas.map(async (microTaskData) => {
-        if (microTaskData.is_test === true) {
-          if (!task.require_contributor_test) {
-            throw new BadRequestException(
-              'Contributor test is not required for this task',
-            );
-          }
+
+    const manager = queryRunner.manager;
+
+    const microTasks: MicroTask[] = [];
+
+    for (const [index, microTaskData] of microTaskDatas.entries()) {
+      if (microTaskData.is_test === true) {
+        if (!task.require_contributor_test) {
+          throw new BadRequestException(
+            'Contributor test is not required for this task',
+          );
         }
-        microTaskData.code = await this.generateCode();
-        microTaskData.type = 'audio';
-        const manager = queryRunner.manager;
-        const microTask = manager.create(MicroTask, microTaskData);
-        return await manager.save(MicroTask, microTask);
-      }),
-    );
+      }
+
+      const createdDate = new Date();
+      createdDate.setSeconds(createdDate.getSeconds() + index);
+
+      microTaskData.code = await this.generateCode();
+      microTaskData.type = 'audio';
+      microTaskData.created_date = createdDate;
+
+      const microTask = manager.create(MicroTask, microTaskData);
+
+      microTasks.push(microTask);
+    }
+
+    await manager.save(MicroTask, microTasks);
+
     return;
   }
 
@@ -677,6 +692,9 @@ export class MicroTaskService {
     }
     let sourceMicroTasks: MicroTask[] = await this.microTaskRepository.find({
       where: { task_id: source_task_id },
+      order:{
+        created_date: 'ASC'
+      }
     });
     const targetMicroTasks = await this.microTaskRepository.find({
       where: { task_id: task_id },
@@ -700,26 +718,37 @@ export class MicroTaskService {
       );
     }
     const manager = queryRunner.manager;
-    const microtasks = await Promise.all(
-      newMicroTasks.map(async (microTask: MicroTask) => {
-        microTask.task_id = task_id;
-        microTask.code = await this.generateCode();
-        return await manager.save(MicroTask, {
-          task_id: task_id,
-          code: microTask.code,
-          text: microTask.text,
-          is_test: task.require_contributor_test ? microTask.is_test : false,
-          instruction: microTask.instruction,
-          file_path: microTask.file_path,
-          type: microTask.type,
-          created_by: created_by,
-          derived_from_microtask_id: microTask.id,
-          category: microTask.category,
-          intent: microTask.intent,
-        });
-      }),
-    );
+    const microTasksToSave: Partial<MicroTask>[] = [];
 
+    for (const [index, microTask] of newMicroTasks.entries()) {
+      const createdDate = new Date();
+      createdDate.setSeconds(createdDate.getSeconds() + index);
+
+      microTask.task_id = task_id;
+      microTask.code = await this.generateCode();
+
+      microTasksToSave.push({
+        task_id: task_id,
+        code: microTask.code,
+        text: microTask.text,
+        is_test: task.require_contributor_test
+          ? microTask.is_test
+          : false,
+        instruction: microTask.instruction,
+        file_path: microTask.file_path,
+        type: microTask.type,
+        created_by: created_by,
+        derived_from_microtask_id: microTask.id,
+        category: microTask.category,
+        intent: microTask.intent,
+        created_date: createdDate,
+      });
+    }
+
+  const microtasks = await manager.save(
+    MicroTask,
+    microTasksToSave,
+  );
     return `${microtasks.length} micro tasks imported from ${source_task.name} to ${task.name}`;
   }
 
@@ -782,8 +811,12 @@ export class MicroTaskService {
     }
     const sourceMicroTasks: MicroTask[] = await this.microTaskRepository.find({
       where: { task_id: source_task_id },
+      order:{
+        created_date: 'ASC'
+      },
       relations: { dataSets: true },
     });
+    
     const targetMicroTasks = await this.microTaskRepository.find({
       where: { task_id: task_id },
     });

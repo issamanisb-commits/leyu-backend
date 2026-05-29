@@ -201,10 +201,15 @@ export class FlagTypeSanitized {
   description: string;
   @ApiProperty()
   created_date: Date;
-  static from(flagType: FlagType) {
+  static from(flagType: FlagType, preferredLanguage?: string) {
     return {
       id: flagType.id,
-      name: flagType.name,
+      name:
+        preferredLanguage && flagType.alternative_names
+          ? (flagType.alternative_names.find(
+              (alt) => alt.key === preferredLanguage,
+            )?.name ?? flagType.name)
+          : flagType.name,
       alternative_names: flagType.alternative_names,
 
       description: flagType.description,

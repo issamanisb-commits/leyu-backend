@@ -1,6 +1,40 @@
 {
-    "new_task_notification_title":"አዲስ ተግባር ተመዝግቧል",
-    "new_task_notification_message":"አዲስ ተግባር ተመድቦልዎታል፦ {taskTitle}። ለዝርዝሮች እባክዎ ዳሽቦርድዎን ያረጋግጡ።",
-    "task_rejected_notification_title":"ተግባር ውድቅ ተደርጓል",
-    "task_rejected_notification_message":"በ ኮድ { taskCode} ተግባር: {taskTitle} ላይ ያስገቡት ስራ ውድቅ ተደርጓል. እባክዎ እንደገና ይሞክሩ።"
+  "new_task_notification_title": "አዲስ ተግባር ተመድቧል",
+  "new_task_notification_message": "አዲስ {taskTitle} ለእርስዎ ዝግጁ ነው፣ ተግባሩን ያጠናቅቁ እና ተጨማሪ ገቢ ያግኙ እንዲሁም እድገትዎን ያሳድጉ!",
+
+  "task_rejected_notification_title": "እርምጃ ያስፈልጋል",
+  "task_rejected_notification_message": "በ{taskTitle} ላይ ያቀረቡት ተግባር በዚህ ጊዜ አልተቀበለም፣ ነገር ግን እንደገና ለመሞከር ዕድል አለዎት። አስተያየቱን ለማየት ይጫኑ እና እንደገና ይሞክሩ!",
+
+  "halfway_reminder_notification_title": "ማስታወሻ!",
+  "halfway_reminder_notification_message": "ወደ {taskTitle} መጨረሻ ጊዜ ግማሽ ደርሰዋል። ክፍያዎን ለማግኘት አስተዋጽኦዎን ማጠናቀቅን አይርሱ!",
+
+  "final_warning_notification_title": "24 ሰዓታት ቀርተዋል",
+  "final_warning_notification_message": "ተግባርዎ {taskTitle} በአንድ ቀን ውስጥ ያበቃል። ያደረጉት እድገት እንዳይጠፋ አሁኑኑ ያጠናቅቁ እና ያስገቡ!",
+
+  "password_change_notification_title": "የደህንነት ማስጠንቀቂያ",
+  "password_change_notification_message": "የይለፍ ቃልዎ በቅርቡ ተቀይሯል። ይህን እርስዎ ካላደረጉት እባክዎ ድጋፍ ቡድኑን ያነጋግሩ።",
+
+  "account_lockout_notification_title": "መለያው ተቆልፏል",
+  "account_lockout_notification_message": "ብዙ ያልተሳኩ የመግቢያ ሙከራዎች ተደርገዋል። ለደህንነትዎ መለያዎ ለ15 ደቂቃዎች ተቆልፏል።",
+
+  "daily_inactivity_notification_title": "እድሉን አያምልጥዎ!",
+  "daily_inactivity_notification_message": "ዛሬ ምንም ተግባር አላጠናቀቁም። አሁኑኑ ይግቡ እና ትርፍ ጊዜዎን ወደ ገቢ ይቀይሩ!",
+
+  "re_engagement_notification_title": "ድምጽዎ ናፍቆናል!",
+  "re_engagement_notification_message": "አዳዲስ ስክሪፕቶች ለእርስዎ አስተዋጽኦ በመጠባበቅ ላይ ናቸው። ተመልሰው በዳሽቦርዱ ላይ ያለውን አዲስ ነገር ይመልከቱ።",
+
+  "withdrawal_success_notification_title": "ገንዘብ ማውጣት ተሳክቷል",
+  "withdrawal_success_notification_message": "ተሳክቷል! {amount} ወደ መለያዎ ተልኳል። ተጨማሪ ለማግኘት አስተዋጽኦዎን ይቀጥሉ!",
+
+  "withdrawal_failed_notification_title": "ክፍያው አልተሳካም",
+  "withdrawal_failed_notification_message": "ገንዘብ ማውጣትዎን ማስኬድ አልቻልንም። የክፍያ ዝርዝሮችዎን ለማየት ይጫኑ እና እንደገና ይሞክሩ።",
+
+  "reviewer_new_batch_notification_title": "አዲስ የሚገመገሙ ተግባሮች",
+  "reviewer_new_batch_notification_message": "አዲስ የ{taskType} ስብስብ ለጥራት ምርመራ ዝግጁ ሆኗል። የሚጠብቁ ተግባሮችዎን በቅርብ ይከታተሉ!",
+
+  "reviewer_queue_limit_notification_title": "ያልተገመገሙ ተግባሮች ማስጠንቀቂያ",
+  "reviewer_queue_limit_notification_message": "የግምገማ ወረፋዎ እየበዛ ነው! {count} ተግባሮች የእርስዎን ማጽደቅ በመጠባበቅ ላይ ናቸው።",
+
+  "new_sign_up_title": "አዲስ ሪፈራል!",
+  "new_sign_up_message": "አዲስ አስተዋጽኦ አድራጊ በእርስዎ ሪፈራል ኮድ ተጠቅሞ ቡድንዎን ተቀላቅሏል።"
 }

@@ -61,17 +61,27 @@ export class FacilitatorContributorService {
   ): Promise<FacilitatorContributor> {
     // const facilitatorContributor=await this.facilitatorContributorRepository.findOne({where:{task_id:task_id,facilitator_id:facilitator_id}});
     const manager = queryRunner.manager.getRepository(FacilitatorContributor);
+    const task=await this.taskService.findOne({where:{id:task_id},relations:{taskRequirement:true}});
+    if(!task){
+      throw new NotFoundException(`Task not found`);
+    }
+
     const facilitatorContributors =
       await this.facilitatorContributorRepository.find({
         where: { task_id: task_id },
         select: { contributor_id: true },
       });
+    const totalContributorsAssigned=facilitatorContributors.length;
     const unAssignedContributorIds = contributor_ids.filter(
       (contributor_id) =>
         !facilitatorContributors.some(
           (fc) => fc.contributor_id === contributor_id,
         ),
     );
+    const maximumAssignment=task.taskRequirement.max_contributor_per_facilitator;
+    if(totalContributorsAssigned+unAssignedContributorIds.length>maximumAssignment){
+      throw new BadRequestException(`Maximum assignment reached`);
+    }
     const newFacilitatorContributors: FacilitatorContributor[] =
       unAssignedContributorIds.map((contributor_id) => {
         const facilitatorContributor = new FacilitatorContributor();

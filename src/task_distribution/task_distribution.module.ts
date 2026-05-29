@@ -13,7 +13,6 @@ import { TaskDistributionController } from './controllers/TaskDistribution.contr
 import { TaskDistributionMonitoringService } from './service/TaskDistributionMonitoring.service';
 import { TaskDistributionMonitoringController } from './controllers/TaskDistributionMonitoring.controller';
 import { ReviewerTaskService } from './service/ReviewerTasks.service';
-import { ReviewerTasks } from './enitities/ReviewerTasks.entity';
 import { GetTasksService } from './service/GetTask.service';
 import { TaskRedistributionService } from './service/TaskRedistribution.service';
 import { TaskSubmissionService } from './service/TaskSubmission.service';
@@ -30,7 +29,6 @@ import { YcI18nModule } from 'src/yc-i18n/yc-i18n.module';
       ScoreLog,
       ContributorMicroTasks,
       MicroTaskStatistics,
-      ReviewerTasks,
       DataSetReview,
     ]),
     CacheModule,

@@ -34,6 +34,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { HttpOnlyThrottlerGuard } from './auth/guard/otp-throttler.guard';
 // import { APP_GUARD } from '@nestjs/core';
 // import { OtpThrottlerGuard } from './auth/guard/otp-throttler.guard';
+import { ChatbotModule } from './chatbot/chatbot.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -46,6 +47,8 @@ import { HttpOnlyThrottlerGuard } from './auth/guard/otp-throttler.guard';
           .valid('development', 'production', 'test', 'provision'),
         JWT_SECRET: Joi.string().required(),
         JWT_REFRESH_SECRET: Joi.string().required(),
+        JWT_EXPIRES_IN: Joi.string().required(),
+        JWT_REFRESH_EXPIRES_IN: Joi.string().required(),
         DATABASE_URL: Joi.string().required(),
         DATABASE_SCHEMA: Joi.string().required(),
         REDIS_HOST: Joi.string().required(),
@@ -60,18 +63,18 @@ import { HttpOnlyThrottlerGuard } from './auth/guard/otp-throttler.guard';
         DATASET_RABBITMQ_EXCHANGE_NAME: Joi.string().required(),
         DATASET_RABBITMQ_QUEUE_NAME: Joi.string().required(),
         DATASET_RABBITMQ_ROUTING_KEY: Joi.string().required(),
-        SMS_BASE_URL: Joi.string().required(),
-        SMS_IDENTIFIER: Joi.string().required(),
-        SMS_SENDER: Joi.string().required(),
-        SMS_TOKEN: Joi.string().required(),
+        AFRO_SMS_BASE_URL: Joi.string().required(),
+        AFRO_SMS_IDENTIFIER: Joi.string().required(),
+        AFRO_SMS_SENDER: Joi.string().required(),
+        AFRO_TOKEN: Joi.string().required(),
         MINIO_ENDPOINT: Joi.string().required(),
         MINIO_ACCESS_KEY: Joi.string().required(),
         MINIO_SECRET_KEY: Joi.string().required(),
         MINIO_BUCKET: Joi.string().required(),
         EMAIL_USER: Joi.string().required(),
         EMAIL_PASS: Joi.string().required(),
-        PAYMENT_BASE_URL: Joi.string().required(),
-        PAYMENT_MERCHANT_ID: Joi.string().required(),
+        Payment_BASE_URL: Joi.string().required(),
+        WITHDRAW_PAYLOAD_SECRET: Joi.string().required(),
         FRONTEND_URL: Joi.string().required(),
         WALLET_INTEGRITY_SECRET: Joi.string().required(),
       }),
@@ -95,7 +98,7 @@ import { HttpOnlyThrottlerGuard } from './auth/guard/otp-throttler.guard';
     I18nModule.forRoot({
       fallbackLanguage: 'en',
       loaderOptions: {
-        path: path.join(process.cwd(), 'src/i18n/'),
+        path: path.join(__dirname, 'i18n'),
         watch: true,
       },
       resolvers: [new QueryResolver(['lang'])],
@@ -145,6 +148,7 @@ import { HttpOnlyThrottlerGuard } from './auth/guard/otp-throttler.guard';
     CacheModule,
     BackgroundTaskModule,
     YcI18nModule,
+    ChatbotModule,
   ],
   controllers: [AppController],
   providers: [

@@ -41,6 +41,8 @@ import { UserSanitize } from '../sanitize';
 import { PublisherService } from 'src/common/service/RabbitPublish.service';
 import { FirstContributorUpdateDto } from '../dto/User.dto';
 import { LanguageConstants } from 'src/utils/constants/Language.constant';
+import { NotificationService } from 'src/common/service/Notification.service';
+import { I18nService } from 'nestjs-i18n';
 @Injectable()
 export class UserService {
   constructor(
@@ -60,6 +62,8 @@ export class UserService {
     private readonly userReferralService: UserReferralService,
     private readonly publishService: PublisherService,
     private jwtService: JwtService,
+    private readonly i18n: I18nService,
+    private readonly notificationService:NotificationService,
     // private eventEmitter: EventEmitter2,
   ) {
     this.paginationService = new PaginationService<User>(this.userRepository);
@@ -659,6 +663,22 @@ export class UserService {
       } else {
         throw new BadRequestException('Invalid referral code');
       }
+      const title= this.i18n.t('common.new_sign_up_title', {
+        lang:user?.preferred_language||'en'
+      }) || '';
+      const message= this.i18n.t('common.new_sign_up_message', {
+          lang:user?.preferred_language||'en'
+        }) || '';
+      await this.notificationService.create(
+        {
+          user_id: referredBy.id,
+          title: title,
+          message: message,
+          type: 'referral-signup',
+          target:'email',
+          email:referredBy.email
+        }
+      )
     }
     if (userData.national_id) {
       const filePath = await this.fileService.getPreSignedUrl(
@@ -669,6 +689,7 @@ export class UserService {
         image_url: filePath,
       });
     }
+
     return user;
   }
   /**
@@ -925,7 +946,7 @@ export class UserService {
   async filterContributorByTaskRequirement(
     requirement: TaskRequirement | null,
     language_id: string,
-  ): Promise<string[]> {
+  ): Promise<{ id: string ,score: number}[]> {
     const contributor_queries: {
       age?: {
         min: number;
@@ -1007,7 +1028,7 @@ export class UserService {
       });
     }
     usersWithScore.sort((a, b) => b.score - a.score);
-    return usersWithScore.map((user) => user.id);
+    return usersWithScore;
   }
   /**
    * Filter users by task requirement.
@@ -1018,7 +1039,7 @@ export class UserService {
   async filterUserByTaskRequirement(
     requirement: TaskRequirement | null,
     language_id: string,
-  ): Promise<{ id: string; score: number; gender: string }[]> {
+  ): Promise<{ id: string; score: number; gender: 'Male' | 'Female' }[]> {
     const contributor_queries: {
       age?: {
         min: number;
@@ -1096,7 +1117,7 @@ export class UserService {
       where: whereCondition,
       relations: { score: true },
     });
-    const usersWithScore: { id: string; score: number; gender: string }[] = [];
+    const usersWithScore: { id: string; score: number; gender: 'Male' | 'Female' }[] = [];
     if (users) {
       users.map((user) => {
         if (user.score) {

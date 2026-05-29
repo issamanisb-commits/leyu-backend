@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, In } from 'typeorm';
+import { DataSource, In, Not } from 'typeorm';
 import { ContributorMicroTaskService } from './ContributorMicroTask.service';
 import { TaskService } from 'src/project/service/Task.service';
 import { UserService } from 'src/auth/service/User.service';
@@ -183,7 +183,11 @@ export class TaskSubmissionService {
           );
         const contributorMicroTasks =
           await this.contributorMicroTaskService.findOne({
-            where: { contributor_id: user_id, task_id: task_id },
+            where: { contributor_id: user_id, task_id: task_id ,
+              status:Not(ContributorMicroTasksConstantStatus.EXPIRED)
+
+            },
+            
           });
         if (contributorMicroTasks) {
           // const userExpectedTasks = contributorMicroTasks.micro_task_ids.slice(
@@ -486,7 +490,9 @@ export class TaskSubmissionService {
           );
         const contributorMicroTasks =
           await this.contributorMicroTaskService.findOne({
-            where: { contributor_id: user_id, task_id: task_id },
+            where: { contributor_id: user_id, task_id: task_id 
+              ,status:Not(ContributorMicroTasksConstantStatus.EXPIRED)
+            },
           });
         if (contributorMicroTasks) {
           const nextTaskIds = datasets.filter((d) =>

@@ -1,6 +1,39 @@
 {
-    "new_task_notification_title":"Hojiin haaraan siif ramadame jira",
-    "new_task_notification_message":"Hojiin haaraan siif ramadame: {taskTitle}. Mee bal'ina isaaf daashboordii keessan ilaalaa.",
-    "task_rejected_notification_title":"Hojiin Fudhatama hin argannee",
-    "task_rejected_notification_message":"Galmeen kee koodii: { taskCode} hojii: {taskTitle} irratti kennitan fudhatama hin argannee. Mee irra deebi'ii yaalaa."
+    "new_task_notification_title":"Hojii Haaraa",
+    "new_task_notification_message":"Hojiin haaraan {taskTitle} siif qophaa'eera, galii dabalata argachuu fi guddina kee itti fufsiisuuf xumuri!",
+    "task_rejected_notification_title":"Tarkaanfiin Barbaachisaa dha",
+    "task_rejected_notification_message":"Hojiin kee {taskTitle} irratti kenname ammaaf hin fudhatamne, garuu carraa irra deebitee yaaluu ni qabda. Duub-deebii kenname ilaaluuf, cuqaasiitii irra deebi'ii yaali!",
+
+    
+  "halfway_reminder_notification_title": "Keessa Seenuu!",
+  "halfway_reminder_notification_message": "Hojii {taskTitle} keessaa walakkaa irra geesseetta. Kaffaltii kee argachuuf, hojii kee xumuruu hin dagatin!",
+
+  "final_warning_notification_title": "Sa'aatii 24tu Hafe",
+  "final_warning_notification_message": "Hojiin kee {taskTitle} guyyaa tokko keessatti gubata. Hojiin kee akka si jalaa hin banneef amma xumuriitii ergi!",
+
+  "password_change_notification_title": "Akeekkachiisa Nagummaa",
+  "password_change_notification_message": "Jechi icchitii kee dhiyeenya kana jijjiirameera. Yoo kana kan raawwate si'i hin taane, maaloo gargaaraa qunnami.",
+
+  "account_lockout_notification_title": "Akkawuntiin Cufameera",
+  "account_lockout_notification_message": "Yaaliin  seenuu hedduu fashaleen booda, nageenya keetiif jecha akkaawuntiin kee daqiiqaa 15f cufameera.",
+
+  "daily_inactivity_notification_title": "Akka si hin dabarre!",
+  "daily_inactivity_notification_message": "Har'a hojii tokkollee hin raawwanne. Yeroo kee gara galiitti jijjiiruuf amma seeni!",
+
+  "re_engagement_notification_title": "Sagalee kee yaadneerra!",
+  "re_engagement_notification_message": "Barreeffamoonni (scripts) haaraan gumaacha kee eegaa jiru. Daashboordiirra wanti haaraa maal akka ta’e ilaaluuf as deebi’i.",
+
+  "withdrawal_success_notification_title": "Milkaa'ina kaffaltii",
+  "withdrawal_success_notification_message": "Milkaa'ina! Qarshiin ____ gara herrega/accountii keetti ergameera. Galii kee dabaluuf gumaacha kee itti fufi!",
+
+  "withdrawal_failed_notification_title": "Kaffaltiin Fashaleera",
+  "withdrawal_failed_notification_message": "Maallaqa baasuun kee hin milkoofne. Odeeffannoo kaffaltii kee mirkaneeffachuuf cuqaasiitii irra deebi'ii yaali.",
+
+  "reviewer_new_batch_notification_title": "Hojii Gamaggamaa Haaraa",
+  "reviewer_new_batch_notification_message": "Gareen haaraan qulqullina mirkaneessuuf qophaa'eera. Hojii irra jirturratti eegi",
+
+  "reviewer_queue_limit_notification_title": "Akeekkachiisa Hojii Hin Gamaggamamne",
+  "reviewer_queue_limit_notification_message": "Hojiin gamaggama kee daran baay’ateera! Hojiiwwan [count] mirkaneessa kee eegaa jiru",
+  "new_sign_up_title":"Miseensa Haaraa!",
+  "new_sign_up_message":"Hirmaataan haaraa koodii kee fayyadamuun garee keetti dabalameera."
 }

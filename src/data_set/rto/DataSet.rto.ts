@@ -20,6 +20,9 @@ class ReviewsRto {
   comment: string;
   @ApiProperty()
   rejection_reason: string[];
+
+  @ApiProperty()
+  flag_reason: string[];
   @ApiProperty()
   annotations: string[];
 }
@@ -114,6 +117,9 @@ export class DataSetDetailRto {
           comment: review.comment,
           rejection_reason: review?.rejectionReasons.map((rejectionReason) => {
             return rejectionReason.rejectionType.name;
+          }),
+          flag_reason: review?.flagReasons?.map((flagReason) => {
+            return flagReason.flagType?.name;
           }),
           annotations: review?.annotations.map((annotation) => {
             return annotation.name;

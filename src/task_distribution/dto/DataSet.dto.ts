@@ -40,6 +40,11 @@ export class ApproveDataSetDto {
   @IsArray()
   @IsOptional()
   annotationIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Set true if reviewer is uncertain about this review' })
+  @IsBoolean()
+  @IsOptional()
+  is_uncertain?: boolean;
 }
 
 export class ReviewDetailRto {

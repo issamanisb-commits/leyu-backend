@@ -1,9 +1,13 @@
+import { User } from 'src/auth/entities/User.entity';
 import { ContributorMicroTasksConstantStatus } from 'src/utils/constants/ContributorMicroTasks.constant';
 import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
   PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 
 @Entity({ schema: 'task_distribution', name: 'contributor_micro_tasks' })
@@ -16,7 +20,7 @@ export class ContributorMicroTasks {
   contributor_id: string;
 
   @Column({ nullable: true })
-  gender: string;
+  gender: 'Male' | 'Female';
 
   @Column({ nullable: false, type: 'uuid' })
   task_id: string;
@@ -51,6 +55,10 @@ export class ContributorMicroTasks {
   @Column({ nullable: true })
   dead_line: Date;
 
+
+  @UpdateDateColumn()
+  updated_date:Date;
+  
   @CreateDateColumn()
   created_date: Date;
 }

@@ -35,6 +35,20 @@ export class FlagReasonService {
     }
   }
 
+  async createBulk(
+    flagReasons: Partial<FlagReason>[],
+    queryRunner?: QueryRunner,
+  ): Promise<FlagReason[]> {
+    if (queryRunner) {
+      const manager = queryRunner.manager;
+      const data = manager.create(FlagReason, flagReasons);
+      return await manager.save(FlagReason, data);
+    } else {
+      const data = this.flagReasonRepository.create(flagReasons);
+      return await this.flagReasonRepository.save(data);
+    }
+  }
+
   async findAll(
     queryOption: QueryOptions<FlagReason>,
     queryRunner?: QueryRunner,

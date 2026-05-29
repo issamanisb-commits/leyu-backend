@@ -1,5 +1,5 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import { In, QueryRunner } from 'typeorm';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { DataSource, In, QueryRunner } from 'typeorm';
 import { MicroTaskStatistics } from '../enitities/MicroTaskStatistics.entity';
 import { MicroTaskStatisticsService } from './MicroTaskStatistics.service';
 import { ContributorMicroTaskService } from './ContributorMicroTask.service';
@@ -14,12 +14,15 @@ import { GENDER_CONSTANT } from 'src/utils/constants/Gender.constant';
 import { NotificationService } from 'src/common/service/Notification.service';
 import { I18nService } from 'nestjs-i18n';
 import { CacheService } from 'src/cache/CacheService.service';
+import { User } from 'src/auth/entities/User.entity';
+import { parse } from 'path';
+import { MicroTaskService } from 'src/data_set/service/MicroTask.service';
 // import {
 //    I18nPath,
 //    I18nTranslations,
 //  } from 'src/generated/i18n.generated';
 
-const percent_required = 0.4;
+// const percent_required = 0.4;
 
 @Injectable()
 /**
@@ -32,13 +35,14 @@ const percent_required = 0.4;
 export class TaskDistributionService {
   constructor(
     private readonly microTaskStatisticsService: MicroTaskStatisticsService,
-    private readonly dataSetService: DataSetService,
     private readonly contributorMicroTaskService: ContributorMicroTaskService,
     private readonly taskService: TaskService,
+    private readonly microTaskService: MicroTaskService,
     private readonly userService: UserService,
     private readonly notificationService: NotificationService,
     private readonly i18n: I18nService,
     private readonly cacheService: CacheService,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -56,28 +60,35 @@ export class TaskDistributionService {
     // get the task
     const task = await this.taskService.findOne({
       where: { id: task_id },
-      relations: { microTasks: true, taskRequirement: true },
+      relations: {  taskRequirement: true },
     });
     if (!task) {
       throw new Error('Task not found');
     }
+    const microTasks=await this.microTaskService.findAll({
+      where:{task_id:task.id},
+      order:{
+        created_date:'ASC'
+      }
+    })
     const requirement = task?.taskRequirement;
-    let contributor_ids: string[] = [];
+    let contributorsWithScore: { id: string; score: number }[] = [];
     if (!task.is_public || task.require_contributor_test) {
       const userTasks = await this.taskService.findAllTaskMembers(task_id, {
         where: { role: Role.CONTRIBUTOR },
+        relations:{user:{score:true}}
       });
-      contributor_ids = userTasks.map((userTask) => {
-        return userTask.user_id;
-      });
+      contributorsWithScore = userTasks.map((userTask) => {
+        return {id:userTask.user_id,score:userTask.user.score?.score || 0};
+      }).sort((a, b) => b.score - a.score); // sort by score
     } else {
-      contributor_ids =
+      contributorsWithScore =
         await this.userService.filterContributorByTaskRequirement(
           requirement,
           task.language_id,
         );
     }
-    const filter_non_test_micro_tasks = task.microTasks.filter((micro_task) => {
+    const filter_non_test_micro_tasks =microTasks.filter((micro_task) => {
       return micro_task.is_test == false;
     });
     const micro_task_ids: string[] = filter_non_test_micro_tasks.map(
@@ -85,7 +96,7 @@ export class TaskDistributionService {
         return micro_task.id;
       },
     );
-    const contributor_micro_Tasks =
+    const existingAssignments =
       await this.contributorMicroTaskService.findAllUnExpiredAssignments({
         where: { task_id: task_id },
       });
@@ -96,13 +107,27 @@ export class TaskDistributionService {
     const sortedMicroTaskStatistics = microTaskStatistics.sort(
       (a, b) => b.no_of_contributors - a.no_of_contributors,
     );
-    const newContributorIds: string[] = contributor_ids.filter(
-      (contributor_id) => {
-        return !contributor_micro_Tasks.find((contributor_micro_task) => {
-          return contributor_micro_task.contributor_id == contributor_id;
+    const newContributorIds: { id: string; score: number }[] = contributorsWithScore.filter(
+      (c) => {
+        return !existingAssignments.find((contributor_micro_task) => {
+          return contributor_micro_task.contributor_id == c.id;
         });
       },
     );
+    const contributorWithSubmissionCount: { contributor_id: string; submission_count: string , micro_task_ids: string[]}[] = 
+    await this.getTotalSubmissionsOfAContributorsPerTask(task_id);
+    const newContributorIdsWithSubmissionCount = newContributorIds.map((c) => {
+      return {
+        contributor_id: c.id,
+        score: c.score,
+        submission_count: contributorWithSubmissionCount.find((contributor) => {
+          return contributor.contributor_id == c.id;
+        })?.submission_count || '0',
+        micro_task_ids: contributorWithSubmissionCount.find((contributor) => {
+          return contributor.contributor_id == c.id;
+        })?.micro_task_ids || [],
+      };
+    });
     const newMicroTaskIds: string[] = micro_task_ids.filter((micro_task_id) => {
       return !microTaskStatistics.find((micro_task) => {
         return micro_task.micro_task_id == micro_task_id;
@@ -112,14 +137,15 @@ export class TaskDistributionService {
       {
         task_id,
         micro_task_ids: newMicroTaskIds,
-        contributor_ids: newContributorIds,
+        contributor_ids: newContributorIdsWithSubmissionCount,
         microTaskStatistics: sortedMicroTaskStatistics,
         expected_micro_task_for_contributor:
           requirement.max_micro_task_per_contributor,
         expected_no_of_contributors_per_micro_task:
           requirement.max_contributor_per_micro_task,
         batch: requirement.batch || requirement.max_micro_task_per_contributor,
-        existingAssignments: contributor_micro_Tasks,
+        existingAssignments: existingAssignments,
+        contributorWithSubmissionCount: contributorWithSubmissionCount
       },
       task,
       queryRunner,
@@ -130,6 +156,7 @@ export class TaskDistributionService {
       queryRunner,
     );
     return;
+  
   }
   // async manualTaskDistributionForContributor(task_id: string,contributor_id:string,microtask_ids:string[], queryRunner: QueryRunner) {
   //   // get the task
@@ -212,27 +239,37 @@ export class TaskDistributionService {
    *  Resolves once distribution is completed and the task is marked as started.
    */
   async processTaskDistributionGenderBased(
-    task: Task,
+    taskId: string,
     queryRunner: QueryRunner,
   ) {
+    const task = await this.taskService.findOne({
+      where: { id: taskId },
+      relations: {  taskRequirement: true },
+    })
+    if (!task) {
+      throw new NotFoundException('Task not found');
+    }
+    const microTasks=await this.microTaskService.findAll({where:{task_id:taskId},
+    order:{created_date:'ASC'}
+    });
     const task_id = task.id;
     const requirement = task?.taskRequirement;
-    let contributor_ids: { id: string; gender: string }[] = [];
+    let contributor_ids: { id: string; gender: 'Male' | 'Female' ,score:number}[] = [];
     if (!task.is_public || task.require_contributor_test) {
       const userTasks = await this.taskService.findAllTaskMembers(task.id, {
         where: { role: Role.CONTRIBUTOR },
         relations: { user: true },
       });
       contributor_ids = userTasks.map((userTask) => {
-        return { id: userTask.user_id, gender: userTask.user.gender };
-      });
+        return { id: userTask.user_id, gender: userTask.user.gender ,score:userTask.user?.score?.score || 0};
+      }).sort((a, b) => b.score - a.score);
     } else {
       contributor_ids = await this.userService.filterUserByTaskRequirement(
         requirement,
         task.language_id,
       );
     }
-    const filter_non_test_micro_tasks = task.microTasks.filter((micro_task) => {
+    const filter_non_test_micro_tasks = microTasks.filter((micro_task) => {
       return micro_task.is_test == false;
     });
     const micro_task_ids: string[] = filter_non_test_micro_tasks.map(
@@ -263,12 +300,12 @@ export class TaskDistributionService {
     const expectedMale = Math.ceil(
       requirement.gender.male *
         0.01 *
-        requirement.max_micro_task_per_contributor,
+        requirement.max_contributor_per_micro_task,
     );
     const expectedFemale = Math.ceil(
       requirement.gender.female *
         0.01 *
-        requirement.max_micro_task_per_contributor,
+        requirement.max_contributor_per_micro_task,
     );
     // sort contributors according to gender
     newContributors = newContributors.sort((a, b) => {
@@ -287,20 +324,38 @@ export class TaskDistributionService {
         newContributors = newContributors.slice(0, diff);
       }
     }
+    const contributorWithSubmissionCount: { contributor_id: string; submission_count: string , micro_task_ids: string[]}[] = await this.getTotalSubmissionsOfAContributorsPerTask(task_id);
+    // map the contributor with gender 
+    const newContributorIdsWithSubmissionCount = newContributors.map((contributor) => {
+      const submissionCount = contributorWithSubmissionCount.find((contributorSubmission) => contributorSubmission.contributor_id == contributor.id);
+      return {
+        ...contributor,
+        submission_count: submissionCount ? submissionCount.submission_count : '0',
+        micro_task_ids: submissionCount ? submissionCount.micro_task_ids : [],
+      };
+    })
+    const newContributorsWithSubmissionCount = newContributors.map((contributor) => {
+      const submissionCount = newContributorIdsWithSubmissionCount.find((contributorSubmission) => contributorSubmission.id == contributor.id);
+      return {
+        ...contributor,
+        submission_count: submissionCount ? submissionCount.submission_count : '0',
+        micro_task_ids: submissionCount ? submissionCount.micro_task_ids : [],
+      };
+    });
+
     await this.distributeNewTaskGenderBased(
       {
         task_id,
         newMicroTaskIds,
         microTaskStatistics: sortedMicroTaskStatistics,
-        contributor_ids: newContributors,
-        expected_micro_task_for_contributor:
-          requirement.max_micro_task_per_contributor,
-        expected_no_of_contributors_per_micro_task:
-          requirement.max_contributor_per_micro_task,
+        contributor_ids: newContributorsWithSubmissionCount,
+        expected_micro_task_for_contributor: requirement.max_micro_task_per_contributor,
+        expected_no_of_contributors_per_micro_task: requirement.max_contributor_per_micro_task,
         batch: requirement.batch || requirement.max_micro_task_per_contributor,
         expected_male: expectedMale,
         expected_female: expectedFemale,
         existingAssignments: contributor_micro_Tasks,
+        contributorWithSubmissionCount: contributorWithSubmissionCount
       },
       task,
       queryRunner,
@@ -349,6 +404,7 @@ export class TaskDistributionService {
       where: { id: task_id },
       relations: { taskRequirement: true, microTasks: true },
     });
+   
     if (!task) {
       throw new BadRequestException('Task not found');
     }
@@ -357,11 +413,8 @@ export class TaskDistributionService {
     }
     const microTasksLength = task.microTasks.length;
     if (!task.require_contributor_test) {
-      const minMicroTaskRequired = parseFloat(
-        (
-          task.taskRequirement.max_micro_task_per_contributor * percent_required
-        ).toString(),
-      );
+      const minMicroTaskRequired = task.taskRequirement.batch;
+
       if (minMicroTaskRequired > microTasksLength) {
         throw new BadRequestException(
           `At least ${minMicroTaskRequired} micro tasks are required to distribute `,
@@ -374,12 +427,12 @@ export class TaskDistributionService {
       }
     }
     if (task.taskRequirement.is_gender_specific) {
-      await this.processTaskDistributionGenderBased(task, queryRunner);
+      await this.processTaskDistributionGenderBased(task.id, queryRunner);
       return;
     }
 
     await this.processTaskDistribution(task_id, queryRunner);
-    await this.cacheService.clearCacheByTaskId(task_id);
+    await this.cacheService.clearAllTaskRelatedCaches();
 
     return;
   }
@@ -415,11 +468,17 @@ export class TaskDistributionService {
       task_id: string;
       micro_task_ids: string[];
       microTaskStatistics: MicroTaskStatistics[];
-      contributor_ids: string[];
+      contributor_ids: {
+        contributor_id: string;
+        submission_count: string;
+        micro_task_ids: string[];
+      }[],
+
       expected_micro_task_for_contributor: number;
       expected_no_of_contributors_per_micro_task: number;
-      batch?: number;
+      batch: number;
       existingAssignments: ContributorMicroTasks[];
+      contributorWithSubmissionCount: { contributor_id: string; submission_count: string , micro_task_ids: string[]} [];
     },
     task: Task,
     queryRunner: QueryRunner, // Adjust type as needed, e.g., QueryRunner if using TypeORM
@@ -443,10 +502,12 @@ export class TaskDistributionService {
       total_female: number;
     }[] = [];
 
+    
     for (let index = 0; index < data.micro_task_ids.length; index++) {
       microTaskStatics.push({
         id: crypto.randomUUID(),
         micro_task_id: data.micro_task_ids[index],
+        
         no_of_contributors: 0,
         task_id: data.task_id,
         total_male: 0,
@@ -456,6 +517,7 @@ export class TaskDistributionService {
       });
     }
     microTaskStatics = [...microTaskStatics, ...data.microTaskStatistics];
+
     let micro_task_index = 0;
     for (let index = 0; index < data.contributor_ids.length; index++) {
       let iterator = 0;
@@ -463,9 +525,17 @@ export class TaskDistributionService {
       const contributor = data.contributor_ids[index];
       while (iterator < microTaskStatics.length) {
         const microTask = microTaskStatics[micro_task_index];
-        // let microTask = findMicroTask(micro_task_id);
+        let totalAssignedSoFar=contributorMicroTaskIds.length + parseInt(contributor.submission_count);
+        const microTaskAlreadyDone = contributor.micro_task_ids.some((micro_task_id) => {
+          return micro_task_id == microTask.micro_task_id;
+        });
+        if (microTaskAlreadyDone) {
+          micro_task_index++;
+          iterator++;
+          continue;
+        }
         if (
-          contributorMicroTaskIds.length >=
+          totalAssignedSoFar >=
           data.expected_micro_task_for_contributor
         ) {
           break;
@@ -483,20 +553,17 @@ export class TaskDistributionService {
         }
       }
       contributor_micro_tasks.push({
-        contributor_id: contributor,
+        contributor_id: contributor.contributor_id,
         micro_task_ids: contributorMicroTaskIds,
         status: ContributorMicroTasksConstantStatus.NEW,
         expected_micro_task_for_contributor:
-          data.expected_micro_task_for_contributor,
+          data.expected_micro_task_for_contributor - parseInt(contributor.submission_count),
       });
     }
-
-    // await this.contributorMicroTaskService.createMany(contributor_micro_tasks,task_id,batch,queryRunner);
-
+    const minRequiredContributorTasks =data.batch
     contributor_micro_tasks.map((contributor_task) => {
       if (
-        contributor_task.micro_task_ids.length <
-        percent_required * data.expected_micro_task_for_contributor
+        contributor_task.micro_task_ids.length < minRequiredContributorTasks
       ) {
         // decrease the contributor number for each microtask
         contributor_task.micro_task_ids.map((micro_task_id) => {
@@ -522,8 +589,7 @@ export class TaskDistributionService {
       data.existingAssignments.filter(
         (c) =>
           c.status === ContributorMicroTasksConstantStatus.COMPLETED &&
-          c.micro_task_ids.length <
-            data.expected_micro_task_for_contributor * (1 - percent_required),
+          c.micro_task_ids.length <c.expected_micro_task_for_contributor,
       );
 
     const waiting_hr = task.contributor_completion_time_limit || undefined;
@@ -533,7 +599,15 @@ export class TaskDistributionService {
 
     for (let i = 0; i < completeButNotFullyAssignedContributors.length; i++) {
       const newIds: string[] = [];
+      const contributorsPrevSubmissionsMicroTasks=
+      data.contributorWithSubmissionCount.find((c) => c.contributor_id == completeButNotFullyAssignedContributors[i].contributor_id)
+      ?.micro_task_ids || [];
       for (const microTask of data.microTaskStatistics) {
+        if (
+          contributorsPrevSubmissionsMicroTasks.includes(microTask.micro_task_id)
+        ) {
+          continue;
+        }
         if (
           microTask.no_of_contributors <
             microTask.expected_no_of_contributors &&
@@ -547,7 +621,7 @@ export class TaskDistributionService {
         if (
           newIds.length +
             completeButNotFullyAssignedContributors[i].micro_task_ids.length >=
-          data.expected_micro_task_for_contributor
+          completeButNotFullyAssignedContributors[i].expected_micro_task_for_contributor
         ) {
           break;
         }
@@ -579,6 +653,7 @@ export class TaskDistributionService {
     //     }),
     //   );
     // }
+
     await this.contributorMicroTaskService.createMany(
       validContributorTasks,
       data.task_id,
@@ -586,6 +661,7 @@ export class TaskDistributionService {
       queryRunner,
       dead_line,
     );
+
     if (completeButNotFullyAssignedContributors.length > 0) {
       await this.contributorMicroTaskService.upsertMany(
         completeButNotFullyAssignedContributors,
@@ -634,13 +710,19 @@ export class TaskDistributionService {
       task_id: string;
       newMicroTaskIds: string[];
       microTaskStatistics: MicroTaskStatistics[];
-      contributor_ids: { id: string; gender: string }[];
+      contributor_ids: { 
+        id: string; 
+        gender: 'Male' | 'Female';
+        micro_task_ids: string[];
+        submission_count: string
+      }[];
       expected_micro_task_for_contributor: number;
       expected_no_of_contributors_per_micro_task: number;
       expected_male: number;
       expected_female: number;
-      batch?: number;
+      batch: number;
       existingAssignments: ContributorMicroTasks[];
+      contributorWithSubmissionCount: { contributor_id: string; submission_count: string , micro_task_ids: string[]} [];
     },
     task: Task,
     queryRunner: QueryRunner, // Adjust type as needed, e.g., QueryRunner if using TypeORM
@@ -652,7 +734,7 @@ export class TaskDistributionService {
       contributor_id: string;
       micro_task_ids: string[];
       status: string;
-      gender: string;
+      gender: 'Male' | 'Female';
       expected_micro_task_for_contributor: number;
     }[] = [];
     let microTaskStatics: {
@@ -685,8 +767,17 @@ export class TaskDistributionService {
       const contributor = data.contributor_ids[index];
       while (iterator < microTaskStatics.length) {
         const microTask = microTaskStatics[iterator];
+        let totalAssignedSoFar=totalAssignedMicroTasks+ parseInt(contributor.submission_count);
+        const microTaskAlreadyDone = contributor.micro_task_ids.some((micro_task_id) => {
+          return micro_task_id == microTask.micro_task_id;
+        });
+        if (microTaskAlreadyDone) {
+          micro_task_index++;
+          iterator++;
+          continue;
+        }
         if (
-          totalAssignedMicroTasks >= data.expected_micro_task_for_contributor
+          totalAssignedSoFar >= data.expected_micro_task_for_contributor
         ) {
           break;
         }
@@ -729,13 +820,12 @@ export class TaskDistributionService {
         micro_task_ids: contributorMicroTaskIds,
         status: ContributorMicroTasksConstantStatus.NEW,
         expected_micro_task_for_contributor:
-          data.expected_micro_task_for_contributor,
-      });
+          data.expected_micro_task_for_contributor - parseInt(contributor.submission_count) });
     }
 
     // await this.contributorMicroTaskService.createMany(contributor_micro_tasks,task_id,batch,queryRunner);
-    const minRequiredContributorTasks =
-      percent_required * data.expected_micro_task_for_contributor;
+    const minRequiredContributorTasks =task.taskRequirement.batch || data.batch;
+    
     contributor_micro_tasks.map((contributor_task) => {
       if (
         contributor_task.micro_task_ids.length < minRequiredContributorTasks
@@ -758,7 +848,7 @@ export class TaskDistributionService {
       }
     });
     // remove contributors with no microtasks
-    contributor_micro_tasks = contributor_micro_tasks.filter(
+    const validContributorTasks = contributor_micro_tasks.filter(
       (contributor_task) => {
         return contributor_task.micro_task_ids.length > 0;
       },
@@ -767,8 +857,7 @@ export class TaskDistributionService {
       data.existingAssignments.filter(
         (c) =>
           c.status === ContributorMicroTasksConstantStatus.COMPLETED &&
-          c.micro_task_ids.length <
-            data.expected_micro_task_for_contributor * (1 - percent_required),
+          c.micro_task_ids.length < c.expected_micro_task_for_contributor,
       );
     const waiting_hr = task?.contributor_completion_time_limit || undefined;
     const dead_line = waiting_hr
@@ -777,7 +866,15 @@ export class TaskDistributionService {
     for (let i = 0; i < completeButNotFullyAssignedContributors.length; i++) {
       const contributor = completeButNotFullyAssignedContributors[i];
       const newIds: string[] = [];
+      const contributorsPrevSubmissionsMicroTasks=
+        data.contributorWithSubmissionCount.find((c) => c.contributor_id == completeButNotFullyAssignedContributors[i].contributor_id)
+        ?.micro_task_ids || [];
       for (const microTask of microTaskStatics) {
+        if (
+          contributorsPrevSubmissionsMicroTasks.includes(microTask.micro_task_id)
+        ) {
+          continue;
+        }
         if (contributor.gender == 'Male') {
           if (
             microTask.total_male < data.expected_male &&
@@ -804,7 +901,7 @@ export class TaskDistributionService {
         if (
           newIds.length +
             completeButNotFullyAssignedContributors[i].micro_task_ids.length >=
-          data.expected_micro_task_for_contributor
+          completeButNotFullyAssignedContributors[i].expected_micro_task_for_contributor
         ) {
           break;
         }
@@ -828,9 +925,9 @@ export class TaskDistributionService {
       }
     }
 
-    // if (contributor_micro_tasks.length > 0) {
+    // if (validContributorTasks.length > 0) {
     //   await Promise.all(
-    //     contributor_micro_tasks.map(async (contributor_task) => {
+    //     validContributorTasks.map(async (contributor_task) => {
     //       return this.cacheService.clearContributorTaskCache(
     //         contributor_task.contributor_id,
     //       );
@@ -839,7 +936,7 @@ export class TaskDistributionService {
     // }
 
     await this.contributorMicroTaskService.createMany(
-      contributor_micro_tasks,
+      validContributorTasks,
       data.task_id,
       data.batch,
       queryRunner,
@@ -856,7 +953,7 @@ export class TaskDistributionService {
       microTaskStatics,
       queryRunner,
     );
-    await this.notifyContributorAssignment(contributor_micro_tasks, task);
+    await this.notifyContributorAssignment(validContributorTasks, task);
     return;
   }
 
@@ -921,6 +1018,7 @@ export class TaskDistributionService {
     expected_micro_task_for_contributor: number,
     batch: number,
     micro_task_stat: MicroTaskStatistics[],
+    minMicroTaskRequired: number,
     queryRunner: QueryRunner,
   ) {
     const contributor_micro_tasks: {
@@ -954,7 +1052,7 @@ export class TaskDistributionService {
     }
     const has_meet_expected_microtask_for_contributor =
       contributor_micro_tasks.total_micro_tasks >=
-      percent_required * expected_micro_task_for_contributor;
+      minMicroTaskRequired;
     if (has_meet_expected_microtask_for_contributor) {
       await this.contributorMicroTaskService.create(
         contributor_micro_tasks,
@@ -980,8 +1078,6 @@ export class TaskDistributionService {
         ),
       },
     });
-    console.log('contr - microtasks - ', contributorMicroTasks);
-    console.log('Notify - users - ');
     for (const t of contributorMicroTasks) {
       const c = users.find((u) => u.id === t.contributor_id);
       if (!c?.preferred_language) return;
@@ -1009,4 +1105,45 @@ export class TaskDistributionService {
     console.log('Users notified');
     return;
   }
+  private async getTotalSubmissionsOfAContributorsPerTask(
+      taskId: string
+    ): Promise<{
+        contributor_id: string, 
+        submission_count: string
+        micro_task_ids: string[]
+      }[]> {
+      // if (!contributorIds) {
+      //   contributorIds = [];
+      // }
+      // if (contributorIds.length === 0) {
+      //   return [];
+      // }
+      const result = await this.dataSource.getRepository(User)
+        .createQueryBuilder('u')
+        .leftJoin(
+          'u.contributes',
+          'ds',
+          'ds.is_draft = false AND ds.micro_task_id IS NOT NULL'
+        )
+        .leftJoin('ds.microTask', 'mt', 'mt.task_id = :taskId AND mt.is_test = false', { taskId })
+        .select('u.id', 'contributor_id')
+        .addSelect(
+          'COUNT(DISTINCT CASE WHEN mt.task_id = :taskId AND mt.is_test = false THEN ds.micro_task_id END)',
+          'submission_count'
+        )
+        .addSelect(
+          `STRING_AGG(DISTINCT CASE WHEN mt.task_id = :taskId AND mt.is_test = false THEN ds.micro_task_id::text END, ',')`,
+          'micro_task_ids'
+        )
+        // .where('u.id IN (:...contributorIds)', { contributorIds })
+        .groupBy('u.id')
+        .setParameter('taskId', taskId)
+        .getRawMany();
+
+      // Parse the comma-separated string into an array
+      return result.map((r) => ({
+        ...r,
+        micro_task_ids: r.micro_task_ids ? r.micro_task_ids.split(',') : [],
+      }));
+    }
 }

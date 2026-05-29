@@ -1,6 +1,7 @@
 import { User } from 'src/auth/entities/User.entity';
 import { DataSetAnnotation } from 'src/base_data/entities/DataSetAnnotation.entity';
 import { DataSet } from 'src/data_set/entities/DataSet.entity';
+import { FlagReason } from 'src/data_set/entities/FlagReason.entity';
 import { RejectionReason } from 'src/data_set/entities/RejectionReason.entity';
 import {
   Entity,
@@ -33,6 +34,9 @@ export class DataSetReview {
   @Column({ default: false })
   is_flagged: boolean;
 
+  @Column({ default: false })
+  is_uncertain: boolean;
+
   @Column()
   expires_at: Date;
 
@@ -56,6 +60,11 @@ export class DataSetReview {
     (rejectionReason) => rejectionReason.dateSetReview,
   )
   rejectionReasons: RejectionReason[];
+
+  @OneToMany(() => FlagReason, (flagReason) => flagReason.dataSetReview)
+  flagReasons: FlagReason[];
+
+  
 
   @ManyToOne(() => DataSet, (dataSet) => dataSet.dataSetReviews)
   @JoinColumn({ name: 'data_set_id' })

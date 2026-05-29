@@ -9,40 +9,34 @@ Leyu API is a robust backend system that facilitates collaborative data collecti
 ## Key Features
 
 ### 🎯 Project & Task Management
-
 - **Project Creation**: Create and manage data collection projects with detailed metadata
 - **Task Distribution**: Automated task assignment to contributors based on skills and availability
 - **Micro-task System**: Break down large tasks into manageable micro-tasks for efficient processing
 - **Progress Tracking**: Real-time monitoring of project completion status
 
 ### 👥 User Management & Roles
-
 - **Multi-role Support**: Contributors, Reviewers, Facilitators, and Project Managers
 - **User Scoring System**: Performance-based scoring and reputation management
 - **Geographic Organization**: Users organized by regions, zones, and administrative areas
 - **Skill-based Assignment**: Task distribution based on user expertise and language proficiency
 
 ### 🌍 Multi-language Support
-
 - **Language Management**: Support for multiple languages and dialects
 - **Localized Content**: Language-specific task instructions and content
 - **Regional Customization**: Adapt content based on geographic regions
 
 ### 📊 Data Collection & Quality Control
-
 - **Dataset Management**: Structured data collection with validation and quality checks
 - **Review Workflow**: Multi-stage review process with approval/rejection mechanisms
 - **Flag System**: Quality control through flagging and review processes
 - **Audio Support**: Handle audio data with duration tracking and file management
 
 ### 💰 Financial Management
-
 - **Payment System**: Integrated wallet and transaction management
 - **Contributor Compensation**: Automated payment processing for completed tasks
 - **Financial Tracking**: Comprehensive transaction history and reporting
 
 ### 📱 Communication & Notifications
-
 - **SMS Integration**: Multi-provider SMS support (Geez SMS, Afro Message)
 - **Email Notifications**: Automated email communications
 - **Activity Logging**: Comprehensive audit trail of user activities
@@ -85,67 +79,62 @@ Leyu API is a robust backend system that facilitates collaborative data collecti
 ## Installation
 
 1. **Clone the repository**
-
    ```bash
    git clone <repository-url>
    cd leyu-backend
    ```
 
 2. **Install dependencies**
-
    ```bash
-   pnpm install
+   npm install
    ```
 
 3. **Environment Configuration**
-
    ```bash
    cp .env.example .env
    ```
-
+   
    Configure the following environment variables:
-
    ```env
    # Database
    DATABASE_URL="postgresql://username:password@localhost:5432/leyu_db"
    DATABASE_SCHEMA="public"
-
+   
    # JWT Configuration
    JWT_SECRET="your-secret-key"
    JWT_EXPIRES_IN="24h"
    JWT_REFRESH_EXPIRES_IN="10d"
-
+   
    # Redis
    REDIS_URL="redis://localhost:6379"
-
+   
    # MinIO/S3 Storage
    MINIO_ENDPOINT="localhost:9000"
    MINIO_ACCESS_KEY="your-access-key"
    MINIO_SECRET_KEY="your-secret-key"
    MINIO_BUCKET="leyu-bucket"
-
+   
    # Email Configuration
    EMAIL_USER="your-email@gmail.com"
    EMAIL_PASS="your-app-password"
-
+   
    # SMS Providers
 
    AFRO_SMS_BASE_URL="https://api.afromessage.com/api"
    AFRO_TOKEN="your-afro-token"
-
+   
    # Payment Gateway
    SANTIM_PAY_MERCHANT_ID="your-merchant-id"
    SANTIM_PAY_PRIVATE_KEY_IN_PEM="your-private-key"
    ```
 
 4. **Database Setup**
-
    ```bash
    # Run migrations
-   pnpm run migration:run
-
+   npm run migration:run
+   
    # Seed initial data
-   pnpm run seed
+   npm run seed
    ```
 
 ## Development
@@ -154,13 +143,13 @@ Leyu API is a robust backend system that facilitates collaborative data collecti
 
 ```bash
 # Development mode with hot reload
-pnpm run start:dev
+npm run start:dev
 
 # Production mode
-pnpm run start:prod
+npm run start:prod
 
 # Debug mode
-pnpm run start:debug
+npm run start:debug
 ```
 
 The API will be available at `http://localhost:3000/api`
@@ -168,52 +157,51 @@ The API will be available at `http://localhost:3000/api`
 ### API Documentation
 
 Access the interactive API documentation at:
-
 - **Swagger UI**: `http://localhost:3000/doc`
 
 ### Database Operations
 
 ```bash
 # Generate new migration
-pnpm run migration:generate
+npm run migration:generate
 
 # Run migrations
-pnpm run migration:run
+npm run migration:run
 
 # Revert last migration
-pnpm run migration:revert
+npm run migration:revert
 
 # Create new seed
-pnpm run seed:create
+npm run seed:create
 
 # Run seeds
-pnpm run seed:run
+npm run seed:run
 ```
 
 ### Testing
 
 ```bash
 # Unit tests
-pnpm run test
+npm run test
 
 # End-to-end tests
-pnpm run test:e2e
+npm run test:e2e
 
 # Test coverage
-pnpm run test:cov
+npm run test:cov
 
 # Watch mode
-pnpm run test:watch
+npm run test:watch
 ```
 
 ### Code Quality
 
 ```bash
 # Lint code
-pnpm run lint
+npm run lint
 
 # Format code
-pnpm run format
+npm run format
 ```
 
 ## Docker Deployment
@@ -244,14 +232,12 @@ DC_BACK_APP_PORT=3000
 ## API Endpoints
 
 ### Authentication
-
 - `POST /api/auth/login` - User login
 - `POST /api/auth/register` - User registration
 - `POST /api/auth/refresh` - Refresh JWT token
 - `POST /api/auth/logout` - User logout
 
 ### Projects
-
 - `GET /api/projects` - List projects
 - `POST /api/projects` - Create project
 - `GET /api/projects/:id` - Get project details
@@ -259,7 +245,6 @@ DC_BACK_APP_PORT=3000
 - `DELETE /api/projects/:id` - Delete project
 
 ### Tasks
-
 - `GET /api/tasks` - List tasks
 - `POST /api/tasks` - Create task
 - `GET /api/tasks/:id` - Get task details
@@ -267,7 +252,6 @@ DC_BACK_APP_PORT=3000
 - `POST /api/tasks/:id/assign` - Assign task to user
 
 ### Data Sets
-
 - `GET /api/data-sets` - List data sets
 - `POST /api/data-sets` - Submit data set
 - `GET /api/data-sets/:id` - Get data set details
@@ -275,7 +259,6 @@ DC_BACK_APP_PORT=3000
 - `POST /api/data-sets/:id/flag` - Flag data set
 
 ### Users
-
 - `GET /api/users` - List users
 - `GET /api/users/:id` - Get user profile
 - `PUT /api/users/:id` - Update user profile

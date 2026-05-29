@@ -602,7 +602,7 @@ export class TaskService {
         role.name,
         user.phone_number,
         randomPassword,
-        process.env.LEYU_DASHBOARD_URL as string,
+        process.env.FRONTEND_URL as string,
       );
     }
     // Check If the user is already assigned
@@ -679,7 +679,7 @@ export class TaskService {
         role.name,
         user.phone_number,
         randomPassword,
-        process.env.LEYU_DASHBOARD_URL as string,
+        process.env.FRONTEND_URL as string,
       );
     }
     const userTaskBefore: UserTask | null = await this.userTaskService.findOne({
@@ -1516,24 +1516,25 @@ export class TaskService {
       .leftJoin('task.reviewerInstruction', 'reviewerInstruction')
       .innerJoin('task.payment', 'payment')
       .innerJoin('microTask.dataSets', 'dataSet')
-      .innerJoin('dataSet.dataSetReviews', 'r', 'r.reviewer_id = :reviewerId')
+      // .innerJoin('dataSet.dataSetReviews', 'r', 'r.reviewer_id = :reviewerId')
+      .leftJoin('dataSet.dataSetReviews', 'r', 'r.reviewer_id = :reviewerId')
       .where('task.is_archived = false')
       // only tasks where reviewer has approved and not expired review
-      .andWhere((qb) => {
-        const subQuery = qb
-          .subQuery()
-          .select('1')
-          .from('data_set_review', 'r2') // use different alias to avoid confusion
-          .innerJoin('data_set', 'ds', 'ds.id = r2.data_set_id')
-          .innerJoin('micro_task', 'mt', 'mt.id = ds.micro_task_id')
-          .where('mt.task_id = task.id')
-          .andWhere('r2.reviewer_id = :reviewerId')
-          .andWhere('r2.expires_at > NOW()')
-          .andWhere('r2.is_expired = false')
-          .getQuery();
+      // .andWhere((qb) => {
+      //   const subQuery = qb
+      //     .subQuery()
+      //     .select('1')
+      //     .from('data_set_review', 'r2') // use different alias to avoid confusion
+      //     .innerJoin('data_set', 'ds', 'ds.id = r2.data_set_id')
+      //     .innerJoin('micro_task', 'mt', 'mt.id = ds.micro_task_id')
+      //     .where('mt.task_id = task.id')
+      //     .andWhere('r2.reviewer_id = :reviewerId')
+      //     .andWhere('r2.expires_at > NOW()')
+      //     .andWhere('r2.is_expired = false')
+      //     .getQuery();
 
-        return `EXISTS ${subQuery}`;
-      })
+      //   return `EXISTS ${subQuery}`;
+      // })
 
       // count pending reviews per task
 
@@ -1595,6 +1596,7 @@ export class TaskService {
       .addGroupBy('reviewerInstruction.id')
       .addGroupBy('taskRequirement.dialects')
       .addGroupBy('payment.reviewer_credit_per_microtask')
+      .orderBy('task.created_date','DESC')
       .setParameters({
         reviewerId,
       })

@@ -80,9 +80,11 @@ export class FlagTypeController {
   }
 
   @Get()
-  async findAll(@Query() query: UpdateRejectionTypeDto) {
+  async findAll(@Query() query: UpdateRejectionTypeDto , @Request() req) {
     const data = await this.flagTypeService.findAll(query);
-    return data.map((item) => FlagTypeSanitized.from(item));
+    const user = req.user;
+
+    return data.map((item) => FlagTypeSanitized.from(item, user.preferred_language));
   }
 
   @Get(':id')

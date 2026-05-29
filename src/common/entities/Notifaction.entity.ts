@@ -6,6 +6,18 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+export type NotificationType =
+  | 'task-assign'
+  | 'task-rejected'
+  | 'task-approved'
+  | 'task-progress-reminder'
+  | 'reviewer-queue-alert'
+  | 'reviewer-batch-assigned'
+  | 'wallet-withdrawal-success'
+  | 'wallet-withdrawal-failed'
+  | 'password-changed'
+  | 'referral-signup';
+
 @Entity()
 export class Notification {
   @PrimaryGeneratedColumn('uuid')
@@ -24,9 +36,20 @@ export class Notification {
   message: string;
 
   @Column({
-    enum: ['task-assign', 'task-invitation', 'task-rejected', 'task-approved'],
+    enum: [
+      'task-assign',
+      'task-rejected',
+      'task-approved',
+      'task-progress-reminder',
+      'reviewer-queue-alert',
+      'reviewer-batch-assigned',
+      'wallet-withdrawal-success',
+      'wallet-withdrawal-failed',
+      'password-changed',
+      'referral-signup',
+    ],
   })
-  type: 'task-assign' | 'task-invitation' | 'task-rejected' | 'task-approved';
+  type: NotificationType;
 
   @Column({ default: false })
   is_read: boolean;

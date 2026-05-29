@@ -100,7 +100,11 @@ export class ProjectStatisticsService {
     const microTasks: MicroTask[] = await this.microTaskService.findAll({
       where: { task_id: task.id },
     });
-    // let total_data_sets:number=await this.dataSetService.count({where:{micro_task_id:In(microTasks.map(m=>m.id))}});
+    const total_data_sets:number=await this.dataSetService.countAll({
+      microTask:{
+        task_id:task.id
+      }
+    });
     const total_micro_tasks: number = microTasks.length;
     // users
     const user_tasks: UserTask[] = await this.userTaskService.findAll({
@@ -119,7 +123,7 @@ export class ProjectStatisticsService {
     ).length;
 
     return {
-      // total_data_sets,
+      total_data_sets,
       total_micro_tasks,
       total_contributors,
       total_facilitators,

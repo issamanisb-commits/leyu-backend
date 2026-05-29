@@ -24,6 +24,17 @@ export class CreateRejectionDto {
   @IsUUID('all', { each: true })
   rejection_type_ids: string[];
 
+  @ApiProperty({ required: false, description: 'Optional flag type IDs to create flag reasons' })
+  @IsArray()
+  @IsUUID('all', { each: true })
+  @IsOptional()
+  flag_type_ids?: string[];
+
+  @ApiProperty({ required: false, description: 'Set true if reviewer is uncertain about this rejection' })
+  @IsBoolean()
+  @IsOptional()
+  is_uncertain?: boolean;
+
   @ApiProperty()
   @IsString()
   @IsOptional()

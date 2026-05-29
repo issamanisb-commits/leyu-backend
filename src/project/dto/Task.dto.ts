@@ -428,7 +428,6 @@ export class UpdateTaskRequirementDto {
   @ApiPropertyOptional({ required: false })
   @IsOptional()
   @IsArray()
-  @ValidateNested({ each: true })
   sectors?: string[];
 
   @ApiPropertyOptional({ required: false })
@@ -447,10 +446,10 @@ export class UpdateTaskRequirementDto {
   @IsBoolean()
   is_location_specific: boolean = false;
 
-  @ApiPropertyOptional({ required: false })
+  @ApiPropertyOptional({ required: false, type: [LocationDto] })
   @IsOptional()
-  @ValidateNested({ each: true })
-  locations?: LocationDto[];
+  @IsArray()
+  locations?: string[];
 
   @ApiPropertyOptional({ required: false })
   @IsOptional()
@@ -761,6 +760,8 @@ export class ImportContributorFromOtherTaskDto {
     enum: ['Active', 'InActive', 'Flagged', 'Rejected', 'Pending', 'All'],
   })
   @IsOptional()
+  // if empty string convert to undefined
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsEnum(['Active', 'InActive', 'Flagged', 'Rejected', 'Pending'])
   status?: 'Active' | 'InActive' | 'Flagged' | 'Rejected' | 'Pending' | 'All';
 
@@ -778,8 +779,10 @@ export class ImportContributorFromOtherTaskDto {
 
   @ApiProperty({ enum: ['Pending', 'Approved', 'Rejected', 'Flagged', 'All'] })
   @IsOptional()
+  // if empty string convert to undefined
+  @Transform(({ value }) => (value === '' ? undefined : value))
   @IsEnum(['Pending', 'Approved', 'Rejected', 'Flagged', 'All'])
-  datasetStatus: 'Pending' | 'Approved' | 'Rejected' | 'Flagged' | 'All';
+  datasetStatus?: 'Pending' | 'Approved' | 'Rejected' | 'Flagged' | 'All';
 }
 export class ExportContributorsOfATaskDto {
   @ApiProperty({

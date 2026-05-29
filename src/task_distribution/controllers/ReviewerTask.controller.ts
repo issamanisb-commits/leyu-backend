@@ -103,6 +103,7 @@ export class ReviewerTaskDistributionController {
         req.user.id,
         queryRunner,
         body.annotationIds,
+        body.is_uncertain,
       );
       await this.activityLogService.create({
         user_id: req.user.id,
@@ -113,6 +114,7 @@ export class ReviewerTaskDistributionController {
         entity_type: ActivityEntityType.DATASET,
         entity_id: id,
       });
+      await queryRunner.commitTransaction();
 
       await this.publishService.publishDatasetAction({
         action: 'APPROVED',
@@ -120,7 +122,6 @@ export class ReviewerTaskDistributionController {
         actorId: req.user.id,
         timestamp: new Date().toISOString(),
       });
-      await queryRunner.commitTransaction();
       return {
         message: 'Data set approved successfully',
       };
@@ -165,6 +166,8 @@ export class ReviewerTaskDistributionController {
         queryRunner,
         rejectionReason.flag,
         rejectionReason.comment,
+        rejectionReason.flag_type_ids,
+        rejectionReason.is_uncertain,
       );
       await this.activityLogService.create({
         user_id: req.user.id,
@@ -175,14 +178,13 @@ export class ReviewerTaskDistributionController {
         entity_type: ActivityEntityType.DATASET,
         entity_id: id,
       });
-
+      await queryRunner.commitTransaction();
       await this.publishService.publishDatasetAction({
         action: 'REJECTED',
         datasetReviewId: id,
         actorId: req.user.id,
         timestamp: new Date().toISOString(),
       });
-      await queryRunner.commitTransaction();
       return reject;
     } catch (error) {
       if (queryRunner && queryRunner.isTransactionActive) {
@@ -265,6 +267,7 @@ export class ReviewerTaskDistributionController {
         queryRunner,
         rejectionReason.flag,
         rejectionReason.comment,
+        rejectionReason.is_uncertain,
       );
       await this.activityLogService.create({
         user_id: req.user.id,
@@ -358,6 +361,7 @@ export class ReviewerTaskDistributionController {
         queryRunner,
         rejectionReason.flag,
         rejectionReason.comment,
+        rejectionReason.is_uncertain,
       );
       await this.activityLogService.create({
         user_id: req.user.id,
@@ -401,7 +405,6 @@ export class ReviewerTaskDistributionController {
     @Param('task_id', ParseUUIDPipe) id: string,
     @Query() getTaskDto: GetQAMicroTasksDto,
   ) {
-    console.log('getTaskDto', getTaskDto);
     return this.reviewerTaskService.getQAReviewDataSets(id, getTaskDto);
   }
 

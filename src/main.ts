@@ -9,11 +9,13 @@ import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { Queue } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
+import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 // import {  } from '@nestjs/throttler';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['debug', 'error', 'log', 'verbose', 'warn'],
+    rawBody: true, // required for Payment webhook signature verification
   });
 
   const configService = app.get(ConfigService);
@@ -55,6 +57,16 @@ async function bootstrap() {
     serverAdapter,
   });
   app.use('/admin/queues', serverAdapter.getRouter());
+
+  // Shut down the app if RabbitMQ connection is lost
+  const amqpConnection = app.get(AmqpConnection);
+  amqpConnection.managedConnection.on('disconnect', ({ err }) => {
+    Logger.error(
+      `RabbitMQ connection lost: ${err?.message ?? 'unknown error'}. Shutting down.`,
+      'RabbitMQ',
+    );
+    process.exit(1);
+  });
 
   await app.listen(process.env.PORT ?? 3000);
 

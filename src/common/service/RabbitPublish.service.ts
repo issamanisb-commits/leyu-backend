@@ -2,6 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import { ConfigService } from '@nestjs/config';
+import { NotificationType } from '../entities/Notifaction.entity';
 // contracts/dataset-action.event.ts
 export type DatasetAction = 'APPROVED' | 'REJECTED' | 'INVITED';
 
@@ -54,15 +55,13 @@ export class PublisherService {
 
   async publishNotificationEvent(data: {
     userId: string;
-    notificationType:
-      | 'task-assign'
-      | 'task-invitation'
-      | 'task-rejected'
-      | 'task-approved';
+    notificationType: NotificationType;
     displayName: string;
     title: string;
     message?: string;
     payload?: object;
+    target?:'email'|'push',
+    email?:string
   }) {
     console.log('In publishNotificationEvent');
     return this.amqpConnection.publish(

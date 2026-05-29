@@ -25,8 +25,8 @@ export class Transaction {
     [key: string]: any;
   };
 
-  @Column({ type: 'enum', enum: ['Pending', 'Done'] })
-  status: 'Pending' | 'Done';
+  @Column({ type: 'enum', enum: ['Pending', 'Done', 'Failed'] })
+  status: 'Pending' | 'Done' | 'Failed';
 
   @Column({ type: 'uuid' })
   user_id: string;

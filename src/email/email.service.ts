@@ -7,6 +7,7 @@ export class EmailService {
   async sendEmail(to: string, subject: string, body: string): Promise<void> {
     try {
       const result = await this.mailerService.sendMail({
+        sender:'Leyu',
         to,
         subject,
         html: body,
@@ -24,6 +25,7 @@ export class EmailService {
     dashboardUrl: string,
   ) {
     await this.mailerService.sendMail({
+      sender:'Leyu',
       to,
       subject: 'Your Leyu Platform Account Has Been Created',
       html: `

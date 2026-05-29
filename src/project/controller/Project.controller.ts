@@ -38,7 +38,7 @@ import { Role } from 'src/auth/decorators/roles.enum';
 import { JwtAuthGuard } from 'src/auth/guard/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/guard/role.guard';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { multerImageS3Storage } from 'src/config/minio.config';
+import { multerAudioDiskConfig, multerImageS3Storage } from 'src/config/minio.config';
 import { DataSource, FindOptionsWhere, ILike } from 'typeorm';
 import { FindTaskMembersDto } from '../dto/Task.dto';
 import { ActivityLogService } from 'src/common/service/ActivityLog.service';
@@ -87,7 +87,7 @@ export class ProjectController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('image', { storage: multerImageS3Storage }))
+  @UseInterceptors(FileInterceptor('image', { storage: multerImageS3Storage.storage }))
   async create(
     @UploadedFile() file: any,
     @Body()

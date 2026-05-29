@@ -9,9 +9,11 @@ import { FindOptionsWhere, QueryRunner, Repository } from 'typeorm';
 import { Wallet } from '../entities/Wallet.entity';
 import { TransactionService } from './Transaction.service';
 import { Transaction } from '../entities/Transaction.entity';
-import { ChapaPaymentService } from './ChapaPayment.service';
+import { PaymentService } from './Payment.service';
 import { User } from 'src/auth/entities/User.entity';
 import { createHmac } from 'crypto';
+import { NotificationService } from 'src/common/service/Notification.service';
+import { I18nService } from 'nestjs-i18n';
 
 @Injectable()
 export class WalletService {
@@ -19,7 +21,9 @@ export class WalletService {
     @InjectRepository(Wallet)
     private readonly walletRepository: Repository<Wallet>,
     private readonly transactionService: TransactionService,
-    private readonly chapaPaymentService: ChapaPaymentService,
+    private readonly PaymentPaymentService: PaymentService,
+    private readonly i18n: I18nService,
+        private readonly notificationService:NotificationService,
   ) {}
 
   // ── Integrity helpers ────────────────────────────────────────────────────
@@ -147,83 +151,71 @@ export class WalletService {
   }
 
   async withdrawMoney(
-    withDrawData: {
-      account_name?: string;
-      account_number: string;
-      amount: number;
-      bank_code: string;
-    },
-    user: User,
-    queryRunner: QueryRunner,
-  ): Promise<Transaction> {
-    // Acquire pessimistic write lock on the wallet row (Requirement 2.1)
-    const wallet = await queryRunner.manager.findOne(Wallet, {
-      where: { user_id: user.id },
-      lock: { mode: 'pessimistic_write' },
-    });
+  withDrawData: {
+    account_name?: string;
+    account_number: string;
+    amount: number;
+    bank_code: string;
+  },
+  user: User,
+  queryRunner: QueryRunner,
+): Promise<Transaction> {
+  // Acquire pessimistic write lock on the wallet row
+  const wallet = await queryRunner.manager.findOne(Wallet, {
+    where: { user_id: user.id },
+    lock: { mode: 'pessimistic_write' },
+  });
 
-    if (!wallet) {
-      throw new NotFoundException(`Wallet for this user not found`);
-    }
-
-    // Verify integrity before any mutation
-    this.verifyHash(wallet);
-
-    const balance = parseFloat(wallet.balance.toString());
-    const heldBalance = parseFloat(wallet.held_balance.toString());
-    const withdrawAmount = parseFloat(withDrawData.amount.toString());
-
-    // Compute available balance as balance − held_balance (Requirement 3.2)
-    const availableBalance = balance - heldBalance;
-
-    // Reject if withdrawal amount exceeds available balance (Requirement 3.3)
-    if (withdrawAmount > availableBalance) {
-      throw new BadRequestException('Insufficient available balance');
-    }
-
-    // Increment held_balance before calling Chapa (Requirement 3.4)
-    const newHeld = heldBalance + withdrawAmount;
-    this.stampHash(wallet, balance, newHeld);
-    wallet.held_balance = newHeld;
-
-    const transaction = await this.transactionService.create(
-      {
-        user_id: user.id,
-        amount: -withdrawAmount,
-        type: 'Withdraw',
-        status: 'Pending',
-      },
-      queryRunner,
-    );
-
-    try {
-      await this.chapaPaymentService.withDrawMoney({
-        account_name:
-          user.first_name + ' ' + user.middle_name + ' ' + user.last_name,
-        account_number: withDrawData.account_number,
-        amount: withdrawAmount,
-        bank_code: withDrawData.bank_code,
-        reference: transaction.id,
-      });
-
-      // On Chapa success: decrement both balance and held_balance, mark transaction Done (Requirement 3.5)
-      const finalBalance = balance - withdrawAmount;
-      const finalHeld = newHeld - withdrawAmount;
-      this.stampHash(wallet, finalBalance, finalHeld);
-      wallet.balance = finalBalance;
-      wallet.held_balance = finalHeld;
-      await queryRunner.manager.save(wallet);
-      await queryRunner.manager.update(
-        Transaction,
-        { id: transaction.id },
-        { status: 'Done' },
-      );
-      await queryRunner.manager.save(wallet);
-      return transaction;
-    } catch (error) {
-      throw error;
-    }
+  if (!wallet) {
+    throw new NotFoundException(`Wallet for this user not found`);
   }
+
+  // Verify integrity before any mutation
+  this.verifyHash(wallet);
+
+  const balance = parseFloat(wallet.balance.toString());
+  const heldBalance = parseFloat(wallet.held_balance.toString());
+  const withdrawAmount = parseFloat(withDrawData.amount.toString());
+
+  // Compute available balance as balance − held_balance
+  const availableBalance = balance - heldBalance;
+
+  // Reject if withdrawal amount exceeds available balance
+  if (withdrawAmount > availableBalance) {
+    throw new BadRequestException('Insufficient available balance');
+  }
+
+  // Increment held_balance to freeze funds while Payment processes
+  const newHeld = heldBalance + withdrawAmount;
+  this.stampHash(wallet, balance, newHeld);
+  wallet.held_balance = newHeld;
+  await queryRunner.manager.save(wallet);
+
+  // Create a Pending transaction  callback will finalise it
+  const transaction = await this.transactionService.create(
+    {
+      user_id: user.id,
+      amount: -withdrawAmount,
+      type: 'Withdraw',
+      status: 'Pending',
+      metadata: withDrawData,
+    },
+    queryRunner,
+  );
+
+  // Fire payout request to Payment  do not await success/failure here
+  // handlePaymentPayoutCallback owns all balance mutations from this point
+  await this.PaymentPaymentService.withDrawMoney({
+    account_name:
+      user.first_name + ' ' + user.middle_name + ' ' + user.last_name,
+    account_number: withDrawData.account_number,
+    amount: withdrawAmount,
+    bank_code: withDrawData.bank_code,
+    reference: transaction.id,
+  });
+
+  return transaction;
+}
 
   async remove(id: string) {
     const wallet = await this.walletRepository.findOne({ where: { id } });
@@ -242,6 +234,142 @@ export class WalletService {
     return wallet.balance;
   }
   async getWithDrawOptions(): Promise<any> {
-    return this.chapaPaymentService.getBanks();
+    return this.PaymentPaymentService.getBanks();
+  }
+
+  /**
+   * Called by the Payment webhook controller after signature verification.
+   * - success  → deduct balance, release hold, mark transaction Done
+   * - failed/cancelled → release hold only, mark transaction Failed
+   */
+  async handlePaymentPayoutCallback(
+    transactionId: string,
+    isSuccess: boolean,
+    metadata: Record<string, any>,
+  ): Promise<void> {
+    const queryRunner =
+      this.walletRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const transaction = await queryRunner.manager.findOne(Transaction, {
+        where: { id: transactionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!transaction) {
+        // Unknown reference  log and ignore (don't throw, return 200 to Payment)
+        return;
+      }
+
+      // Already finalised  idempotent, skip
+      if (
+        transaction.status === 'Done' ||
+        transaction.metadata?.Payment_finalised
+      ) {
+        return;
+      }
+
+      const wallet = await queryRunner.manager.findOne(Wallet, {
+        where: { user_id: transaction.user_id },
+        lock: { mode: 'pessimistic_write' },
+      });
+
+      if (!wallet) {
+        throw new Error(`Wallet not found for user ${transaction.user_id}`);
+      }
+      const user=await queryRunner.manager.findOne(User, {
+        where: { id: transaction.user_id }
+      });
+
+      this.verifyHash(wallet);
+
+      const balance = parseFloat(wallet.balance.toString());
+      const heldBalance = parseFloat(wallet.held_balance.toString());
+      const withdrawAmount = Math.abs(
+        parseFloat(transaction.amount.toString()),
+      );
+      const releaseHeld = Math.max(0, heldBalance - withdrawAmount);
+
+      if (isSuccess) {
+        // Deduct from balance, release hold
+        const newBalance = balance - withdrawAmount;
+        this.stampHash(wallet, newBalance, releaseHeld);
+        wallet.balance = newBalance;
+        wallet.held_balance = releaseHeld;
+        await queryRunner.manager.save(wallet);
+        await queryRunner.manager.update(
+          Transaction,
+          { id: transactionId },
+          {
+            status: 'Done',
+            metadata: {
+              ...transaction.metadata,
+              ...metadata,
+              Payment_finalised: true,
+            } as any,
+          },
+        );
+        await queryRunner.commitTransaction();
+        const title= this.i18n.t('common.withdrawal_success_notification_title', {
+          lang:user?.preferred_language||'en'
+        }) || '';
+        const message= this.i18n.t('common.withdrawal_success_notification_message', {
+            lang:user?.preferred_language||'en',
+            args:{amount:withdrawAmount}
+          }) || '';
+        await this.notificationService.create(
+          {
+            user_id: transaction.user_id,
+            title: title,
+            message: message,
+            type: 'wallet-withdrawal-success'
+          }
+        )
+      } else {
+        // Release hold only  balance unchanged
+        this.stampHash(wallet, balance, releaseHeld);
+        wallet.held_balance = releaseHeld;
+        await queryRunner.manager.save(wallet);
+        await queryRunner.manager.update(
+          Transaction,
+          { id: transactionId },
+          {
+            status: 'Failed',
+            metadata: {
+              ...transaction.metadata,
+              ...metadata,
+              Payment_finalised: true,
+            } as any,
+          },
+        );
+      }
+
+      await queryRunner.commitTransaction();
+      const title= this.i18n.t('common.withdrawal_failed_notification_title', {
+        lang:user?.preferred_language||'en'
+      }) || '';
+      const message= this.i18n.t('common.withdrawal_failed_notification_message', {
+          lang:user?.preferred_language||'en'
+        }) || '';
+      await this.notificationService.create(
+        {
+          user_id: transaction.user_id,
+          title: title,
+          message: message,
+          type: 'wallet-withdrawal-failed'
+        }
+      )
+    } catch (error) {
+      if (queryRunner.isTransactionActive) {
+        await queryRunner.rollbackTransaction();
+      }
+      throw error;
+    } finally {
+      if (!queryRunner.isReleased) {
+        await queryRunner.release();
+      }
+    }
   }
 }

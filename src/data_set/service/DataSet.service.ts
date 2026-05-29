@@ -133,6 +133,7 @@ export class DataSetService {
       dialect_id: string;
       language_id: string;
       is_test: boolean;
+      audio_duration: number;
     }[],
     contributor_id: string,
     queryRunner: QueryRunner,
@@ -145,6 +146,7 @@ export class DataSetService {
         contributor_id,
         type: DataSetType.AUDIO,
         queue_status: 'pending',
+        audio_duration: item.audio_duration,
       });
     });
     return await queryRunner.manager.save(DataSet, dataSetsMetaData);
@@ -326,6 +328,7 @@ export class DataSetService {
         dataSetReviews: {
           reviewer: { score: true },
           rejectionReasons: { rejectionType: true },
+          flagReasons: { flagType: true },
           annotations: true,
         },
       },
@@ -937,84 +940,103 @@ export class DataSetService {
     };
   }
   async getReviewDataSetsForQA(
-    taskId: string,
-    payload: GetQAMicroTasksDto,
-  ): Promise<PaginatedResult<DataSetDetailRto>> {
-    const page = payload.page || 1;
-    const limit = payload.limit || 10;
-    const skip = (page - 1) * limit;
-    const dataSetReviewQuery =
-      this.dataSetRepository.createQueryBuilder('dataSet');
-    dataSetReviewQuery.leftJoinAndSelect('dataSet.microTask', 'microTask');
-    dataSetReviewQuery.leftJoinAndSelect(
-      'dataSet.dataSetReviews',
-      'dataSetReviews',
-    );
-    dataSetReviewQuery.leftJoinAndSelect('dataSetReviews.reviewer', 'reviewer');
-    dataSetReviewQuery.leftJoinAndSelect('reviewer.score', 'score');
-    dataSetReviewQuery.leftJoinAndSelect(
-      'dataSetReviews.annotations',
-      'annotations',
-    );
-    dataSetReviewQuery.leftJoinAndSelect(
-      'dataSetReviews.rejectionReasons',
-      'rejectionReasons',
-    );
-    dataSetReviewQuery.leftJoinAndSelect(
-      'rejectionReasons.rejectionType',
-      'rejectionType',
-    );
-    dataSetReviewQuery.where('dataSetReviews.task_id = :taskId', {
-      taskId: taskId,
-    });
-    if (
-      payload.reviewerIds &&
-      Array.isArray(payload.reviewerIds) &&
-      payload.reviewerIds.length > 0
-    ) {
+  taskId: string,
+  payload: GetQAMicroTasksDto,
+): Promise<PaginatedResult<DataSetDetailRto>> {
+  const page = payload.page || 1;
+  const limit = payload.limit || 10;
+  const skip = (page - 1) * limit;
+
+  const dataSetReviewQuery = this.dataSetRepository
+    .createQueryBuilder('dataSet')
+    .leftJoinAndSelect('dataSet.microTask', 'microTask')
+    .leftJoinAndSelect('dataSet.dataSetReviews', 'dataSetReviews')
+    .leftJoinAndSelect('dataSetReviews.reviewer', 'reviewer')
+    .leftJoinAndSelect('reviewer.score', 'score')
+    .leftJoinAndSelect('dataSetReviews.annotations', 'annotations')
+    .leftJoinAndSelect('dataSetReviews.rejectionReasons', 'rejectionReasons')
+    .leftJoinAndSelect('rejectionReasons.rejectionType', 'rejectionType')
+
+    .leftJoinAndSelect('dataSetReviews.flagReasons', 'flagReasons')
+    .leftJoinAndSelect('flagReasons.flagType', 'flagType')
+    // ✅ Base condition  always applied first
+    .where('dataSetReviews.task_id = :taskId', { taskId });
+
+  // ✅ Fixed: was incorrectly using .where() which overwrote the taskId condition
+  if (payload.is_uncertain != null) {
+    dataSetReviewQuery.andWhere(
+      'dataSetReviews.is_uncertain = :is_uncertain',
+      { is_uncertain: payload.is_uncertain },
+    )
+    .andWhere(
+        'dataSet.qa_review_status = :dataSetStatus',
+        { dataSetStatus: payload.status },
+      );
+  }
+
+  if (payload.reviewerIds) {
+    if (Array.isArray(payload.reviewerIds) && payload.reviewerIds.length > 0) {
       dataSetReviewQuery.andWhere(
         'dataSetReviews.reviewer_id IN (:...reviewerIds)',
         { reviewerIds: payload.reviewerIds },
       );
-    } else if (payload.reviewerIds) {
-      dataSetReviewQuery.andWhere('dataSetReviews.reviewer_id = :reviewerId', {
-        reviewerId: payload.reviewerIds,
-      });
+    } else if (!Array.isArray(payload.reviewerIds)) {
+      dataSetReviewQuery.andWhere(
+        'dataSetReviews.reviewer_id = :reviewerId',
+        { reviewerId: payload.reviewerIds },
+      );
     }
+  }
 
-    if (payload.status) {
-      if (payload.status == 'Flagged') {
-        dataSetReviewQuery.andWhere('dataSet.is_flagged = :is_flagged', {
-          is_flagged: true,
-        });
-      } else {
-        dataSetReviewQuery.andWhere(
-          'dataSet.qa_review_status = :dataSetStatus',
-          { dataSetStatus: payload.status },
-        );
-      }
+  if (payload.status) {
+    if (payload.status === 'Flagged') {
+      dataSetReviewQuery.andWhere('dataSet.is_flagged = :is_flagged', {
+        is_flagged: true,
+      });
+    } 
+    else {
+      dataSetReviewQuery.andWhere(
+        'dataSet.qa_review_status = :dataSetStatus',
+        { dataSetStatus: payload.status },
+      );
     }
-    dataSetReviewQuery.skip(skip).take(limit);
-    const [dataSetReviews, total] = await dataSetReviewQuery.getManyAndCount();
-    if (dataSetReviews.length > 0) {
-      if (dataSetReviews[0].type == 'audio') {
-        dataSetReviews.forEach(async (dataSet) => {
+  }
+
+  const [dataSetReviews, total] = await dataSetReviewQuery
+    .skip(skip)
+    .take(limit)
+    .getManyAndCount();
+
+  // ✅ Fixed: await inside forEach doesn't work  use Promise.all instead
+  if (dataSetReviews.length > 0) {
+    const firstType = dataSetReviews[0].type;
+    const microTaskType = dataSetReviews[0].microTask?.type;
+
+    if (firstType === 'audio') {
+      await Promise.all(
+        dataSetReviews.map(async (dataSet) => {
           dataSet.file_path = await this.fileService.getPreSignedUrl(
             dataSet.file_path,
           );
-        });
-      }
-      if (['audio', 'image'].includes(dataSetReviews[0].microTask.type)) {
-        dataSetReviews.forEach(async (dataSet) => {
+        }),
+      );
+    }
+
+    if (microTaskType && ['audio', 'image'].includes(microTaskType)) {
+      await Promise.all(
+        dataSetReviews.map(async (dataSet) => {
           dataSet.microTask.file_path = await this.fileService.getPreSignedUrl(
             dataSet.microTask.file_path,
           );
-        });
-      }
+        }),
+      );
     }
-    const formattedDataSets = dataSetReviews.map((dataSet) =>
-      DataSetDetailRto.from(dataSet, 0, 0),
-    );
-    return paginate(formattedDataSets, page, limit, total);
   }
+
+  const formattedDataSets = dataSetReviews.map((dataSet) =>
+    DataSetDetailRto.from(dataSet, 0, 0),
+  );
+
+  return paginate(formattedDataSets, total, page, limit);
+}
 }

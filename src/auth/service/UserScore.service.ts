@@ -48,9 +48,19 @@ export class UserScoreService {
   }
   async reduceNoneSubmitScore(
     userIds: string[],
-    queryRunner: QueryRunner,
+    queryRunner?: QueryRunner,
   ): Promise<void> {
     // create a manager for the query
+    if (!queryRunner) {
+      await Promise.all(
+        userIds.map(async (user_id) => {
+          const userScore = await this.getOrCreateUserScore(user_id);
+          userScore.score = userScore.score + ActionScore.TASK_EXPIRED;
+          return await this.userScoreRepository.save(userScore);
+        }),
+      );
+     return;
+    }
     const manager = queryRunner.manager;
     // Check if the user score already exists
     await Promise.all(

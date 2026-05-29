@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { In } from 'typeorm';
+import { In, Not } from 'typeorm';
 import { ContributorMicroTaskService } from './ContributorMicroTask.service';
 import { ContributorMicroTasks } from '../enitities/ContributorMicroTasks.entity';
 import { TaskService } from 'src/project/service/Task.service';
@@ -32,6 +32,32 @@ import { GetContributorTasksDto } from '../dto/Task.dto';
 import { DataSetSanitize } from 'src/data_set/sanitize';
 import { CacheService } from 'src/cache/CacheService.service';
 import { LanguageConstants } from 'src/utils/constants/Language.constant';
+import { User } from 'src/auth/entities/User.entity';
+
+type ContributorTaskRtoOverrides = Omit<
+  ContributorTaskRto,
+  | 'id'
+  | 'name'
+  | 'description'
+  | 'is_public'
+  | 'require_contributor_test'
+  | 'task_type'
+  | 'average_time'
+  | 'earning_per_task'
+> & {
+  // These are the only truly optional ones
+  dead_line?: Date;
+  estimated_earning: number | null;
+};
+type TaskWithStatus = Task & {
+  totalApprovedMicroTasks: number;
+  totalPendingMicroTasks: number;
+  totalRejectedMicroTasks: number;
+  totalApprovedTestMicroTasks: number;
+  totalPendingTestMicroTasks: number;
+  totalRejectedTestMicroTasks: number;
+}
+
 
 @Injectable()
 /**
@@ -106,83 +132,382 @@ export class GetTasksService {
    * @throws {NotFoundException}
    *  Thrown when the contributor user does not exist.
    */
-  async getContributorTasks(
-    user_id: string,
-    contributorTaskDto: GetContributorTasksDto,
-  ): Promise<PaginatedResult<ContributorTaskRto>> {
-    const user = await this.userService.findOne({ where: { id: user_id } });
-    if (!user) throw new NotFoundException(`User with id ${user_id} not found`);
-    let tasks: any[] = await this.cacheService.getContributorTasks(user_id);
-    if (tasks.length > 0) {
-      const total = tasks.length;
-      if (contributorTaskDto.status && contributorTaskDto.status != 'ALL') {
-        if (contributorTaskDto.status == 'RECENT') {
-          tasks = tasks.filter((task) =>
-            [
-              'REJECTED',
-              'TEST_REJECTED',
-              'UNDER_REVIEW',
-              'TEST_UNDER_REVIEW',
-            ].includes(task.status),
-          );
-        } else {
-          tasks = tasks.filter(
-            (task) => task.status == contributorTaskDto.status,
-          );
-        }
+  // ─── Helper: Pagination ───────────────────────────────────────────────────────
+
+  private paginateTasks<T>(
+    tasks: T[],
+    page: number,
+    limit: number,
+    total?: number,
+  ): PaginatedResult<T> {
+    const skip = (page - 1) * limit;
+    const lastIndex = Math.min(skip + limit, tasks.length);
+    return paginate(
+      tasks.slice(skip, lastIndex),
+      total ?? tasks.length,
+      page,
+      limit,
+    );
+  }
+
+  // ─── Helper: Status filter ────────────────────────────────────────────────────
+
+  private filterByStatus<T extends { status: string }>(
+    tasks: T[],
+    status: string,
+  ): T[] {
+    if (!status || status === 'ALL') return tasks;
+
+    const RECENT_STATUSES = [
+      'REJECTED',
+      'TEST_REJECTED',
+      'UNDER_REVIEW',
+      'TEST_UNDER_REVIEW',
+    ];
+    return status === 'RECENT'
+      ? tasks.filter((t) => RECENT_STATUSES.includes(t.status))
+      : tasks.filter((t) => t.status === status);
+  }
+
+  // ─── Helper: Base RTO shape ───────────────────────────────────────────────────
+
+  private buildBaseRto(
+  task: TaskWithStatus,
+  overrides: ContributorTaskRtoOverrides,
+): ContributorTaskRto {
+  return ContributorTaskRto.fromSelf({
+    id: task.id,
+    name: task.name,
+    description: task.description,
+    is_public: task.is_public,
+    require_contributor_test: task.require_contributor_test,
+    is_closed: task.is_closed,
+    is_archived: task.is_archived,
+    distribution_started: task.distribution_started,
+    task_type: task.taskType?.task_type,
+    average_time: task.taskRequirement?.appriximate_time_per_batch ?? null,
+    earning_per_task: task.payment?.contributor_credit_per_microtask ?? null,
+    // overrides must supply the rest (status, counts, dead_line, estimated_earning)
+    ...overrides,
+  });
+}
+
+  private estimatedEarning(task: TaskWithStatus, unitCount: number): number {
+    return task.payment.contributor_credit_per_microtask * unitCount;
+  }
+
+  // ─── Helper: Build RTO for assigned tasks (have ContributorMicroTask) ─────────
+
+  private buildAssignedTaskRto(
+    task: TaskWithStatus,
+    assignment: ContributorMicroTasks,
+  ): ContributorTaskRto | null {
+    const earning = this.estimatedEarning(task, assignment.total_micro_tasks);
+    // ── COMPLETED assignment ──────────────────────────────────────────────────
+    if (assignment.status === ContributorMicroTasksConstantStatus.COMPLETED) {
+      const base = {
+        done_count: task.totalApprovedMicroTasks+task.totalPendingMicroTasks+task.totalRejectedMicroTasks,
+        total_count: task.totalApprovedMicroTasks+task.totalPendingMicroTasks+task.totalRejectedMicroTasks,
+        dead_line: assignment.dead_line,
+        rejected_count: task.totalRejectedMicroTasks,
+        pending_count: task.totalPendingMicroTasks,
+        approved_count: task.totalApprovedMicroTasks,
+        estimated_earning: earning,
+      };
+
+      if (task.totalRejectedMicroTasks > 0) {
+        return this.buildBaseRto(task, { ...base, status: 'REJECTED' });
       }
-      const limit = contributorTaskDto.limit || 10;
-      const page = contributorTaskDto.page || 1;
-      // const take=
-      const skip = (page - 1) * limit;
-      const lastIndex = Math.min(skip + limit, tasks.length);
-      const paginatedContributorTasks = tasks.slice(skip, lastIndex);
-      return paginate(paginatedContributorTasks, total, page, limit);
+      if (task.totalPendingMicroTasks > 0) {
+        return this.buildBaseRto(task, { ...base, status: 'UNDER_REVIEW' });
+      }
+      return this.buildBaseRto(task, {
+        ...base,
+        status: 'COMPLETED',
+        rejected_count: 0,
+        pending_count: 0,
+      });
     }
+    let totalDone=task.totalRejectedMicroTasks + task.totalPendingMicroTasks + task.totalApprovedMicroTasks;
+    // ── IN_PROGRESS assignment ────────────────────────────────────────────────
+    const microTasksIds=assignment.micro_task_ids;
+    const nextBatchIds=microTasksIds.slice(assignment.current_batch, Math.min(microTasksIds.length, assignment.current_batch+assignment.batch));
+    const undone = nextBatchIds.length;
+    let total=totalDone+undone;
+    if (assignment.status === ContributorMicroTasksConstantStatus.IN_PROGRESS) {
+      // Rejected tasks take priority
+      if (task.totalRejectedMicroTasks > 0) {
+        // const totalDone = Math.min(
+        //   task.totalRejectedMicroTasks +
+        //     task.totalPendingMicroTasks +
+        //     task.totalApprovedMicroTasks,
+        //   assignment.total_micro_tasks,
+        // );
+        return this.buildBaseRto(task, {
+          status: 'REJECTED',
+          done_count: totalDone,
+          total_count: total,
+          dead_line: assignment.dead_line,
+          rejected_count: task.totalRejectedMicroTasks,
+          pending_count: task.totalPendingMicroTasks,
+          approved_count: task.totalApprovedMicroTasks,
+          estimated_earning: earning,
+        });
+      }
+      
+      return this.buildBaseRto(task, {
+        status: 'UNDER_REVIEW',
+        done_count: totalDone,
+        total_count: total,  //assignment.micro_task_ids.length,
+        dead_line: assignment.dead_line,
+        rejected_count: task.totalRejectedMicroTasks,
+        pending_count: task.totalPendingMicroTasks,
+        approved_count: task.totalApprovedMicroTasks,
+        estimated_earning: earning,
+      });
+    }
+
+    // ── NEW assignment ────────────────────────────────────────────────────────
+    if (assignment.status === ContributorMicroTasksConstantStatus.NEW) {
+      if (task.totalRejectedMicroTasks > 0) {
+        // const totalDone = Math.min(
+        //   task.totalRejectedMicroTasks +
+        //     task.totalPendingMicroTasks +
+        //     task.totalApprovedMicroTasks,
+        //   assignment.total_micro_tasks,
+        // );
+        return this.buildBaseRto(task, {
+          status: 'REJECTED',
+          done_count: totalDone,
+          total_count: total,
+          dead_line: assignment.dead_line,
+          rejected_count: task.totalRejectedMicroTasks,
+          pending_count: task.totalPendingMicroTasks,
+          approved_count: task.totalApprovedMicroTasks,
+          estimated_earning: earning,
+        });
+      }
+
+      // totalDone =
+      //   task.totalApprovedMicroTasks +
+      //   task.totalPendingMicroTasks +
+      //   task.totalRejectedMicroTasks +
+      //   task.totalApprovedTestMicroTasks +
+      //   task.totalPendingTestMicroTasks +
+      //   task.totalRejectedTestMicroTasks;
+
+      if (totalDone > 0) {
+        const maxBatch = Math.min(
+          assignment.batch,
+          assignment.micro_task_ids.length,
+        );
+        return this.buildBaseRto(task, {
+          status: 'UNDER_REVIEW',
+          done_count: totalDone,
+          total_count:total,
+          dead_line: assignment.dead_line,
+          rejected_count: task.totalRejectedMicroTasks,
+          pending_count: task.totalPendingMicroTasks,
+          approved_count: task.totalApprovedMicroTasks,
+          estimated_earning: earning,
+        });
+      }
+
+      return this.buildBaseRto(task, {
+        status: totalDone>0?'UNDER_REVIEW':'NEW',
+        done_count: totalDone,
+        total_count:total,
+        dead_line: assignment.dead_line,
+        estimated_earning: earning,
+        rejected_count: task.totalRejectedMicroTasks,
+        approved_count: task.totalApprovedMicroTasks,
+        pending_count: task.totalPendingMicroTasks,
+      });
+    }
+
+    return null;
+  }
+
+  // ─── Helper: Build RTO for member tasks (no assignment, has UserTask) ─────────
+
+  private buildMemberTaskRto(
+    task: TaskWithStatus,
+    memberStatus: UserTask,
+  ): ContributorTaskRto | null {
+    const earning = this.estimatedEarning(
+      task,
+      task.taskRequirement.max_micro_task_per_contributor,
+    );
+
+    if (memberStatus.status === 'Active') {
+      if (
+        task.totalApprovedTestMicroTasks > 0 &&
+        task.totalApprovedMicroTasks === 0
+      ) {
+        return this.buildBaseRto(task, {
+          status: 'TEST_UNDER_REVIEW',
+          done_count: task.totalApprovedTestMicroTasks,
+          total_count: task.totalApprovedTestMicroTasks,
+          approved_count: task.totalApprovedTestMicroTasks,
+          estimated_earning: earning,
+          rejected_count: 0,
+          pending_count: 0
+        });
+      }
+      else if (task.totalRejectedMicroTasks>0){
+        return this.buildBaseRto(task, {
+          status:'REJECTED',
+          done_count: task.totalApprovedMicroTasks + task.totalRejectedMicroTasks + task.totalPendingMicroTasks,
+          total_count: task.totalApprovedMicroTasks + task.totalRejectedMicroTasks + task.totalPendingMicroTasks,
+          dead_line: undefined,
+          approved_count: task.totalApprovedMicroTasks,
+          estimated_earning: earning,
+          rejected_count: task.totalRejectedMicroTasks,
+          pending_count: task.totalPendingMicroTasks
+        });
+      }
+      else if ((task.totalApprovedMicroTasks + task.totalPendingMicroTasks + task.totalRejectedMicroTasks) > 0) {
+        return this.buildBaseRto(task, {
+          status: 'COMPLETED',
+          done_count: task.totalApprovedMicroTasks + task.totalRejectedMicroTasks + task.totalPendingMicroTasks,
+          total_count: task.totalApprovedMicroTasks + task.totalRejectedMicroTasks + task.totalPendingMicroTasks,
+          dead_line: undefined,
+          approved_count: task.totalApprovedMicroTasks,
+          estimated_earning: earning,
+          rejected_count: task.totalRejectedMicroTasks,
+          pending_count: task.totalPendingMicroTasks
+        });
+      }
+      return null;
+    }
+
+    if (memberStatus.status === 'Rejected') {
+      const testTotal =
+        task.totalApprovedTestMicroTasks +
+        task.totalPendingTestMicroTasks +
+        task.totalRejectedTestMicroTasks;
+      return this.buildBaseRto(task, {
+        status: 'TEST_REJECTED',
+        done_count: testTotal,
+        total_count: testTotal,
+        rejected_count: task.totalRejectedTestMicroTasks,
+        pending_count: task.totalPendingTestMicroTasks,
+        approved_count: task.totalApprovedTestMicroTasks,
+        estimated_earning: earning,
+      });
+    }
+
+    if (memberStatus.status === 'Pending') {
+      const totalDone =
+        task.totalApprovedTestMicroTasks +
+        task.totalPendingTestMicroTasks +
+        task.totalRejectedTestMicroTasks;
+      const totalTestMicroTasks = task.microTasks.filter(
+        (m) => m.is_test,
+      ).length;
+
+      const status =
+        task.totalRejectedTestMicroTasks > 0
+          ? 'REJECTED'
+          : totalDone > 0
+            ? 'UNDER_REVIEW'
+            : 'NEW';
+
+      return this.buildBaseRto(task, {
+        status,
+        done_count: totalDone,
+        total_count: totalDone > 0 ? totalDone : totalTestMicroTasks,
+        rejected_count: task.totalRejectedTestMicroTasks,
+        pending_count: task.totalPendingTestMicroTasks,
+        approved_count: task.totalApprovedTestMicroTasks,
+        estimated_earning: earning,
+      });
+    }
+
+    return null;
+  }
+
+  // ─── Helper: Build RTO for brand-new tasks (no assignment, no UserTask) ───────
+
+  private buildNewTestTaskRto(task: TaskWithStatus): ContributorTaskRto | null {
+    if (!task.require_contributor_test) return null;
+
+    const totalTestMicroTasks = task.microTasks.filter((m) => m.is_test).length;
+    return this.buildBaseRto(task, {
+      status: 'NEW',
+      done_count: 0,
+      total_count: totalTestMicroTasks,
+      estimated_earning: this.estimatedEarning(
+        task,
+        task.taskRequirement.max_micro_task_per_contributor
+      ),
+      rejected_count: 0,
+      approved_count: 0,
+      pending_count: 0
+    });
+  }
+
+  // ─── Helper: Build RTO for a single task (dispatcher) ────────────────────────
+
+  private buildTaskRto(
+    task: TaskWithStatus,
+    assignment: ContributorMicroTasks | undefined,
+    memberStatus: UserTask | undefined,
+  ): ContributorTaskRto | null {
+    const isBlockedMember =
+      memberStatus?.status === 'InActive' || memberStatus?.status === 'Flagged';
+
+    if (assignment) {
+      if (isBlockedMember) return null;
+      return this.buildAssignedTaskRto(task, assignment);
+    }
+
+    if (memberStatus) {
+      return this.buildMemberTaskRto(task, memberStatus);
+    }
+
+    return this.buildNewTestTaskRto(task);
+  }
+
+  // ─── Helper: Fetch all raw data needed ───────────────────────────────────────
+
+  private async fetchContributorData(user_id: string, user: User) {
     const matchedTasks = await this.taskService.findMatchingTasks({
       dialect_id: user.dialect_id,
       language_id: user.language_id,
       birth_date: user.birth_date,
       gender: user.gender,
     });
+
     const memberTasks = await this.userTaskService.findAll({
-      where: {
-        user_id: user_id,
-      },
-      order: {
-        created_date: 'DESC',
-      },
-      relations: {
-        task: true,
-      },
+      where: { user_id },
+      order: { created_date: 'DESC' },
+      relations: { task: true },
     });
-    const memberTaskIds = memberTasks.map((m) => m.task.id);
+
     const contributorAssignedTasks: ContributorMicroTasks[] =
       await this.contributorMicroTaskService.findAllUnExpiredAssignments({
-        where: {
-          contributor_id: user_id,
-        },
-        order: {
-          created_date: 'DESC',
-        },
+        where: { contributor_id: user_id },
+        order: { created_date: 'DESC' },
       });
-    const newAssignedTaskIds = contributorAssignedTasks
-      .filter((task) => task.status === ContributorMicroTasksConstantStatus.NEW)
-      .map((task) => task.task_id);
-    const testRequireMatchingTaskIds = matchedTasks
-      .filter((task) => task.task.require_contributor_test)
-      .map((task) => task.task.id);
 
+    return { matchedTasks, memberTasks, contributorAssignedTasks };
+  }
+
+  // ─── Helper: Fetch and filter userTasks from DB ───────────────────────────────
+
+  private async fetchUserTasks(
+    user_id: string,
+    newAssignedTaskIds: string[],
+    testRequireMatchingTaskIds: string[],
+    memberTaskIds: string[],
+  ) {
     const userTasks = await this.taskService.findAll({
       where: [
         {
           is_closed: false,
           is_archived: false,
-          microTasks: {
-            dataSets: {
-              contributor_id: user_id,
-            },
-          },
+          microTasks: { dataSets: { contributor_id: user_id } },
         },
         {
           is_closed: false,
@@ -194,9 +519,7 @@ export class GetTasksService {
           ]),
         },
       ],
-      order: {
-        created_date: 'DESC',
-      },
+      order: { created_date: 'DESC' },
       relations: {
         taskType: true,
         taskRequirement: true,
@@ -205,6 +528,8 @@ export class GetTasksService {
         payment: true,
       },
     });
+
+    // Scope dataSets to this contributor only
     userTasks.forEach((task) => {
       task.microTasks.forEach((microTask) => {
         microTask.dataSets = microTask.dataSets.filter(
@@ -213,421 +538,85 @@ export class GetTasksService {
       });
     });
 
-    const taskStatus = getTaskStatus(userTasks);
-    let contributorRecentTasks: ContributorTaskRto[] = [];
+    return userTasks;
+  }
 
-    // console.log("Tasks ",taskStatus.map((task) =>task.name ));
-    for (const task of taskStatus) {
-      const contributorAssignedTask = contributorAssignedTasks.find(
-        (item) => item.task_id == task.id,
-      );
-      const memberStatus: UserTask | undefined = memberTasks.find(
-        (item) => item.task_id == task.id,
-      );
-      // console.log({
-      //   contributorAssignedTask,
-      //   memberStatus:memberStatus?.status,
-      //   name:task.name
-      // })
-      if (contributorAssignedTask) {
-        console.log('In first if ', task.name);
-        if (
-          !memberStatus ||
-          (memberStatus.status !== 'InActive' &&
-            memberStatus.status !== 'Flagged')
-        ) {
-          if (
-            contributorAssignedTask.status ==
-            ContributorMicroTasksConstantStatus.COMPLETED
-          ) {
-            if (task.totalRejectedMicroTasks > 0) {
-              contributorRecentTasks.push({
-                ...task,
-                status: 'REJECTED',
-                done_count: contributorAssignedTask.total_micro_tasks,
-                total_count: contributorAssignedTask.total_micro_tasks,
-                dead_line: contributorAssignedTask.dead_line,
-                rejected_count: task.totalRejectedMicroTasks,
-                pending_count: task.totalPendingMicroTasks,
-                approved_count: task.totalApprovedMicroTasks,
-                task_type: task.taskType.task_type,
-                average_time: task.taskRequirement.appriximate_time_per_batch,
-                estimated_earning:
-                  task.payment.contributor_credit_per_microtask *
-                  contributorAssignedTask.total_micro_tasks,
-                earning_per_task: task.payment.contributor_credit_per_microtask,
-              });
-            } else if (task.totalPendingMicroTasks > 0) {
-              contributorRecentTasks.push({
-                ...task,
-                status: 'UNDER_REVIEW',
-                done_count: contributorAssignedTask.total_micro_tasks,
-                total_count: contributorAssignedTask.total_micro_tasks,
-                dead_line: contributorAssignedTask.dead_line,
-                rejected_count: task.totalRejectedMicroTasks,
-                pending_count: task.totalPendingMicroTasks,
-                approved_count: task.totalApprovedMicroTasks,
-                task_type: task.taskType?.task_type,
-                average_time: task.taskRequirement.appriximate_time_per_batch,
-                estimated_earning:
-                  task.payment.contributor_credit_per_microtask *
-                  contributorAssignedTask.total_micro_tasks,
-                earning_per_task: task.payment.contributor_credit_per_microtask,
-              });
-            } else {
-              // If all are approved
-              contributorRecentTasks.push({
-                ...task,
-                status: 'COMPLETED',
-                done_count: contributorAssignedTask.total_micro_tasks,
-                total_count: contributorAssignedTask.total_micro_tasks,
-                dead_line: contributorAssignedTask.dead_line,
-                rejected_count: 0,
-                pending_count: 0,
-                approved_count: task.totalApprovedMicroTasks,
-                task_type: task.taskType?.task_type,
-                average_time: task.taskRequirement.appriximate_time_per_batch,
-                estimated_earning:
-                  task.payment.contributor_credit_per_microtask *
-                  contributorAssignedTask.total_micro_tasks,
-                earning_per_task: task.payment.contributor_credit_per_microtask,
-              });
-            }
-          } else {
-            const totalDoneCount = Math.min(
-              task.totalRejectedMicroTasks +
-                task.totalPendingMicroTasks +
-                task.totalApprovedMicroTasks,
-              contributorAssignedTask.total_micro_tasks,
-            );
-            if (task.totalRejectedMicroTasks > 0) {
-              contributorRecentTasks.push({
-                ...task,
-                status:
-                  task.totalRejectedMicroTasks > 0
-                    ? 'REJECTED'
-                    : 'UNDER_REVIEW',
-                done_count: totalDoneCount,
-                total_count: contributorAssignedTask.total_micro_tasks,
-                dead_line: contributorAssignedTask.dead_line,
-                rejected_count: task.totalRejectedMicroTasks,
-                pending_count: task.totalPendingMicroTasks,
-                approved_count: task.totalApprovedMicroTasks,
-                task_type: task.taskType.task_type,
-                average_time: task.taskRequirement.appriximate_time_per_batch,
-                estimated_earning:
-                  task.payment.contributor_credit_per_microtask *
-                  contributorAssignedTask.total_micro_tasks,
-                earning_per_task: task.payment.contributor_credit_per_microtask,
-              });
-            } else {
-              // If the assignment is new or inprogress
-              // if in progress
-              if (
-                contributorAssignedTask.status ==
-                ContributorMicroTasksConstantStatus.IN_PROGRESS
-              ) {
-                const done_count = contributorAssignedTask.current_batch;
-                const total_count =
-                  contributorAssignedTask.micro_task_ids.length;
-                const dead_line = contributorAssignedTask.dead_line;
-                const rejected_count = task.totalRejectedMicroTasks;
-                const pending_count = task.totalPendingMicroTasks;
-                const approved_count = task.totalApprovedMicroTasks;
+  // ─── Main method ──────────────────────────────────────────────────────────────
 
-                contributorRecentTasks.push({
-                  ...task,
-                  status: 'UNDER_REVIEW',
-                  done_count,
-                  total_count,
-                  dead_line,
-                  rejected_count,
-                  pending_count,
-                  approved_count,
-                  task_type: task.taskType.task_type,
-                  average_time: task.taskRequirement.appriximate_time_per_batch,
-                  estimated_earning:
-                    task.payment.contributor_credit_per_microtask *
-                    contributorAssignedTask.total_micro_tasks,
-                  earning_per_task:
-                    task.payment.contributor_credit_per_microtask,
-                });
-              }
-              if (
-                contributorAssignedTask.status ==
-                ContributorMicroTasksConstantStatus.NEW
-              ) {
-                const totalDone =
-                  task.totalApprovedMicroTasks +
-                  task.totalPendingMicroTasks +
-                  task.totalRejectedMicroTasks +
-                  task.totalApprovedTestMicroTasks +
-                  task.totalPendingTestMicroTasks +
-                  task.totalRejectedTestMicroTasks;
-                if (totalDone > 0) {
-                  const done_count = 0;
-                  const maxBatch = Math.min(
-                    contributorAssignedTask.batch,
-                    contributorAssignedTask.micro_task_ids.length,
-                  ); //contributorAssignedTask.batch
-                  const total_count =
-                    contributorAssignedTask.micro_task_ids.slice(
-                      0,
-                      maxBatch,
-                    ).length;
-                  const dead_line = contributorAssignedTask.dead_line;
-                  const rejected_count = task.totalRejectedMicroTasks;
-                  const pending_count = task.totalPendingMicroTasks;
-                  const approved_count = task.totalApprovedMicroTasks;
+  async getContributorTasks(
+    user_id: string,
+    contributorTaskDto: GetContributorTasksDto,
+  ): Promise<PaginatedResult<ContributorTaskRto>> {
+    const user = await this.userService.findOne({ where: { id: user_id } });
+    if (!user) throw new NotFoundException(`User with id ${user_id} not found`);
 
-                  contributorRecentTasks.push({
-                    ...task,
-                    status: 'UNDER_REVIEW',
-                    done_count,
-                    total_count,
-                    dead_line,
-                    rejected_count,
-                    pending_count,
-                    approved_count,
-                    task_type: task.taskType.task_type,
-                    average_time:
-                      task.taskRequirement.appriximate_time_per_batch,
-                    estimated_earning:
-                      task.payment.contributor_credit_per_microtask *
-                      contributorAssignedTask.total_micro_tasks,
-                    earning_per_task:
-                      task.payment.contributor_credit_per_microtask,
-                  });
-                } else {
-                  const done_count = 0;
-                  const total_count = Math.min(
-                    contributorAssignedTask.micro_task_ids.length,
-                    contributorAssignedTask.batch,
-                  );
-                  const dead_line = contributorAssignedTask.dead_line;
-                  contributorRecentTasks.push({
-                    ...task,
-                    status: 'NEW',
-                    done_count,
-                    total_count,
-                    dead_line,
-                    rejected_count: 0,
-                    pending_count: 0,
-                    approved_count: 0,
-                    task_type: task.taskType.task_type,
-                    average_time:
-                      task.taskRequirement.appriximate_time_per_batch,
-                    estimated_earning:
-                      task.payment.contributor_credit_per_microtask *
-                      contributorAssignedTask.total_micro_tasks,
-                    earning_per_task:
-                      task.payment.contributor_credit_per_microtask,
-                  });
-                }
-              }
-              //   if (contributorAssignedTask.status ==
-              //     ContributorMicroTasksConstantStatus.COMPLETED){
-              //       if (
-              //   task.totalRejectedMicroTasks >0
-              // ) {
-              //   contributorRecentTasks.push({
-              //     ...task,
-              //     status: 'REJECTED',
-              //     done_count: task.totalApprovedMicroTasks + task.totalRejectedMicroTasks + task.totalPendingMicroTasks,
-              //     total_count:  task.totalApprovedMicroTasks + task.totalRejectedMicroTasks + task.totalPendingMicroTasks,
-              //     // dead_line: '',
-              //     rejected_count: task.totalRejectedMicroTasks,
-              //     pending_count: 0,
-              //     approved_count: task.totalApprovedMicroTasks,
-              //     task_type: task.taskType.task_type,
-              //     average_time: task.taskRequirement.appriximate_time_per_batch,
-              //     estimated_earning:
-              //       task.payment.contributor_credit_per_microtask *
-              //       task.taskRequirement.max_micro_task_per_contributor,
-              //     earning_per_task: task.payment.contributor_credit_per_microtask,
-              //   });
-              // } else {
-              //   contributorRecentTasks.push({
-              //     ...task,
-              //     status: 'COMPLETED',
-              //     done_count: task.totalApprovedMicroTasks,
-              //     total_count: task.totalApprovedMicroTasks,
-              //     dead_line: undefined,
-              //     rejected_count: 0,
-              //     pending_count: 0,
-              //     approved_count: task.totalApprovedMicroTasks,
-              //     task_type: task.taskType?.task_type,
-              //     average_time: task.taskRequirement.appriximate_time_per_batch,
-              //     estimated_earning:
-              //       task.payment.contributor_credit_per_microtask *
-              //       task.taskRequirement.max_micro_task_per_contributor,
-              //     earning_per_task: task.payment.contributor_credit_per_microtask,
-              //   });
-              // }
-              //     }
-            }
-          }
-        } else {
-          console.log('In second else ', memberStatus.status);
-        }
-      } else {
-        console.log('In recent ', memberStatus);
-        if (memberStatus) {
-          if (memberStatus.status == 'Active') {
-            if (
-              task.totalApprovedTestMicroTasks > 0 &&
-              task.totalApprovedMicroTasks == 0
-            ) {
-              contributorRecentTasks.push({
-                ...task,
-                status: 'TEST_UNDER_REVIEW',
-                done_count: task.totalApprovedTestMicroTasks,
-                total_count: task.totalApprovedTestMicroTasks,
-                // dead_line: '',
-                rejected_count: 0,
-                pending_count: 0,
-                approved_count: task.totalApprovedTestMicroTasks,
-                task_type: task.taskType.task_type,
-                average_time: task.taskRequirement.appriximate_time_per_batch,
-                estimated_earning:
-                  task.payment.contributor_credit_per_microtask *
-                  task.taskRequirement.max_micro_task_per_contributor,
-                earning_per_task: task.payment.contributor_credit_per_microtask,
-              });
-            } else if (task.totalApprovedMicroTasks > 0) {
-              contributorRecentTasks.push({
-                ...task,
-                status: 'COMPLETED',
-                done_count: task.totalApprovedMicroTasks,
-                total_count: task.totalApprovedMicroTasks,
-                dead_line: undefined,
-                rejected_count: 0,
-                pending_count: 0,
-                approved_count: task.totalApprovedMicroTasks,
-                task_type: task.taskType?.task_type,
-                average_time: task.taskRequirement.appriximate_time_per_batch,
-                estimated_earning:
-                  task.payment.contributor_credit_per_microtask *
-                  task.taskRequirement.max_micro_task_per_contributor,
-                earning_per_task: task.payment.contributor_credit_per_microtask,
-              });
-            }
-          } else if (memberStatus.status == 'Rejected') {
-            contributorRecentTasks.push({
-              ...task,
-              status: 'TEST_REJECTED',
-              done_count:
-                task.totalApprovedTestMicroTasks +
-                task.totalPendingTestMicroTasks +
-                task.totalRejectedTestMicroTasks,
-              total_count:
-                task.totalApprovedTestMicroTasks +
-                task.totalPendingTestMicroTasks +
-                task.totalRejectedTestMicroTasks,
-              rejected_count: task.totalRejectedTestMicroTasks,
-              pending_count: task.totalPendingTestMicroTasks,
-              approved_count: task.totalApprovedTestMicroTasks,
-              task_type: task.taskType?.task_type,
-              average_time: task.taskRequirement.appriximate_time_per_batch,
-              estimated_earning:
-                task.payment.contributor_credit_per_microtask *
-                task.taskRequirement.max_micro_task_per_contributor,
-              earning_per_task: task.payment.contributor_credit_per_microtask,
-            });
-          } else if (memberStatus.status == 'Pending') {
-            const totalDoneTasks =
-              task.totalApprovedTestMicroTasks +
-              task.totalPendingTestMicroTasks +
-              task.totalRejectedTestMicroTasks;
-            const totalTestMicroTasks = task.microTasks.filter(
-              (m) => m.is_test,
-            ).length;
-            contributorRecentTasks.push({
-              ...task,
-              status:
-                task.totalRejectedTestMicroTasks > 0
-                  ? 'REJECTED'
-                  : totalDoneTasks > 0
-                    ? 'UNDER_REVIEW'
-                    : 'NEW',
-              done_count: totalDoneTasks,
-              total_count:
-                totalDoneTasks > 0 ? totalDoneTasks : totalTestMicroTasks,
-              rejected_count: task.totalRejectedTestMicroTasks,
-              pending_count: task.totalPendingTestMicroTasks,
-              approved_count: task.totalApprovedTestMicroTasks,
-              task_type: task.taskType.task_type,
-              average_time: task.taskRequirement.appriximate_time_per_batch,
-              estimated_earning:
-                task.payment.contributor_credit_per_microtask *
-                task.taskRequirement.max_micro_task_per_contributor,
-              earning_per_task: task.payment.contributor_credit_per_microtask,
-            });
-          }
-        } else {
-          if (task.require_contributor_test) {
-            const totalTestMicroTasks = task.microTasks.filter(
-              (m) => m.is_test,
-            ).length;
-            contributorRecentTasks.push({
-              ...task,
-              status: 'NEW',
-              done_count: 0,
-              total_count: totalTestMicroTasks,
-              rejected_count: 0,
-              pending_count: 0,
-              approved_count: 0,
-              task_type: task.taskType.task_type,
-              average_time: task.taskRequirement.appriximate_time_per_batch,
-              estimated_earning:
-                task.payment.contributor_credit_per_microtask *
-                task.taskRequirement.max_micro_task_per_contributor,
-              earning_per_task: task.payment.contributor_credit_per_microtask,
-            });
-          }
-        }
-      }
+    const limit = contributorTaskDto.limit || 10;
+    const page = contributorTaskDto.page || 1;
+
+    // ── Serve from cache if available ──────────────────────────────────────────
+    const cached: ContributorTaskRto[] =
+      await this.cacheService.getContributorTasks(user_id);
+    if (cached.length > 0) {
+      const filtered = this.filterByStatus(cached, contributorTaskDto.status);
+      return this.paginateTasks(filtered, page, limit, cached.length);
     }
+
+    // ── Fetch raw data ─────────────────────────────────────────────────────────
+    const { matchedTasks, memberTasks, contributorAssignedTasks } =
+      await this.fetchContributorData(user_id, user);
+
+    const memberTaskIds = memberTasks.map((m) => m.task.id);
+
+    const newAssignedTaskIds = contributorAssignedTasks
+      .filter((t) => t.status === ContributorMicroTasksConstantStatus.NEW)
+      .map((t) => t.task_id);
+
+    const testRequireMatchingTaskIds = matchedTasks
+      .filter((t) => t.task.require_contributor_test)
+      .map((t) => t.task.id);
+
+    const userTasks = await this.fetchUserTasks(
+      user_id,
+      newAssignedTaskIds,
+      testRequireMatchingTaskIds,
+      memberTaskIds,
+    );
+
+    // ── Build RTOs ─────────────────────────────────────────────────────────────
+    const taskStatuses = getTaskStatus(userTasks);
+
+    const contributorRecentTasks: ContributorTaskRto[] = taskStatuses.reduce(
+      (acc, task) => {
+        const assignment = contributorAssignedTasks.find(
+          (a) => a.task_id === task.id,
+        );
+        const memberStatus = memberTasks.find((m) => m.task_id === task.id);
+        const rto = this.buildTaskRto(task, assignment, memberStatus);
+        if (rto) acc.push(rto);
+        return acc;
+      },
+      [] as ContributorTaskRto[],
+    );
+
+    // ── Write to cache ─────────────────────────────────────────────────────────
     if (contributorRecentTasks.length > 0) {
-      console.log('WRITING CACHE');
       await this.cacheService.writeContributorTask(
         user_id,
         contributorRecentTasks,
       );
-      console.log('WRITING CACHE DONE');
     }
-    if (contributorTaskDto.status && contributorTaskDto.status != 'ALL') {
-      if (contributorTaskDto.status == 'RECENT') {
-        contributorRecentTasks = contributorRecentTasks.filter((task) =>
-          [
-            'REJECTED',
-            'TEST_REJECTED',
-            'UNDER_REVIEW',
-            'TEST_UNDER_REVIEW',
-          ].includes(task.status),
-        );
-      } else {
-        contributorRecentTasks = contributorRecentTasks.filter(
-          (task) => task.status == contributorTaskDto.status,
-        );
-      }
-    }
-    const limit = contributorTaskDto.limit || 10;
-    const page = contributorTaskDto.page || 1;
-    // const take=
-    const skip = (page - 1) * limit;
-    const lastIndex = Math.min(skip + limit, contributorRecentTasks.length);
-    const paginatedContributorTasks = contributorRecentTasks.slice(
-      skip,
-      lastIndex,
+
+    // ── Filter & paginate ──────────────────────────────────────────────────────
+    const filtered = this.filterByStatus(
+      contributorRecentTasks,
+      contributorTaskDto.status,
     );
-    return {
-      result: paginatedContributorTasks,
-      total: contributorRecentTasks.length,
-      totalPages: Math.ceil(contributorRecentTasks.length / limit),
-      page: page,
-      limit: limit,
-    };
+    return this.paginateTasks(
+      filtered,
+      page,
+      limit,
+      contributorRecentTasks.length,
+    );
   }
   // async getUserRecentTasksV2(
   //   user_id: string,
@@ -1128,11 +1117,22 @@ export class GetTasksService {
     userPreferredLanguage: LanguageConstants = LanguageConstants.ENGLISH,
   ): Promise<TaskMicroTasksResponse> {
     console.log('=== handleActive ===', userPreferredLanguage);
-    const contributorMicroTasksAssigned =
+    const contributorMicroTasksAssignedInComplete =
       await this.contributorMicroTaskService.findOne({
-        where: { contributor_id: userId, task_id: task.id },
+        where: {
+          contributor_id: userId,
+          task_id: task.id,
+          status: In([
+            ContributorMicroTasksConstantStatus.IN_PROGRESS,
+            ContributorMicroTasksConstantStatus.NEW,
+          ]),
+        },
       });
 
+    console.log(
+      'Contributor Assignment ',
+      contributorMicroTasksAssignedInComplete,
+    );
     const contributorSubmissions: MicroTask[] =
       await this.microTaskService.findAll({
         where: {
@@ -1148,9 +1148,12 @@ export class GetTasksService {
           },
         },
       });
-    if (!contributorMicroTasksAssigned) {
+    if (!contributorMicroTasksAssignedInComplete) {
       const result: ContributorMicroTaskRto[] = [];
-      for (const mt of contributorSubmissions) {
+      let nonTestSubmissions = contributorSubmissions.filter(
+        (mt) => !mt.is_test,
+      );
+      for (const mt of nonTestSubmissions) {
         const status = getMicroTaskStatus(
           mt,
           task.taskRequirement.max_retry_per_task + 1,
@@ -1191,20 +1194,23 @@ export class GetTasksService {
       });
     }
     const nextBatch = Math.min(
-      contributorMicroTasksAssigned.current_batch +
-        contributorMicroTasksAssigned.batch,
-      contributorMicroTasksAssigned.total_micro_tasks,
+      contributorMicroTasksAssignedInComplete.current_batch +
+        contributorMicroTasksAssignedInComplete.batch,
+      contributorMicroTasksAssignedInComplete.total_micro_tasks,
     );
-    const current_batch = contributorMicroTasksAssigned.current_batch;
-    const prevMicroTasksIds =
-      contributorMicroTasksAssigned.micro_task_ids.slice(0, current_batch);
+    const current_batch = contributorMicroTasksAssignedInComplete.current_batch;
+    // const prevMicroTasksIds =
+    //   contributorMicroTasksAssignedInComplete.micro_task_ids.slice(
+    //     0,
+    //     current_batch,
+    //   );
     const nextMicroTasksIds =
-      contributorMicroTasksAssigned.micro_task_ids.slice(
+      contributorMicroTasksAssignedInComplete.micro_task_ids.slice(
         current_batch,
         nextBatch,
       );
     const prevDoneMicroTasks: any[] = contributorSubmissions.filter((mt) =>
-      prevMicroTasksIds.includes(mt.id),
+      mt.is_test==false
     );
     let nextAssignedMicroTasks: any[] = [];
     if (nextMicroTasksIds.length > 0) {
@@ -1274,7 +1280,7 @@ export class GetTasksService {
         task.taskRequirement.max_micro_task_per_contributor,
       earning_per_task: task.payment.contributor_credit_per_microtask,
       average_time: task.taskRequirement.appriximate_time_per_batch,
-      deadline: contributorMicroTasksAssigned.dead_line,
+      deadline: contributorMicroTasksAssignedInComplete.dead_line,
     });
   }
 
@@ -1510,6 +1516,7 @@ export class GetTasksService {
           where: {
             task_id: task.id,
             contributor_id: userId,
+            status: Not(ContributorMicroTasksConstantStatus.EXPIRED),
           },
         });
       if (contributorMicroTasksAssigned) {
@@ -1722,6 +1729,7 @@ export class GetTasksService {
           where: {
             task_id: task.id,
             contributor_id: userId,
+            status: Not(ContributorMicroTasksConstantStatus.EXPIRED),
           },
         });
       if (!contributorMicroTasksAssigned) {

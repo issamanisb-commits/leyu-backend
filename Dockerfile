@@ -3,17 +3,15 @@ FROM node:22-alpine AS builder
 
 WORKDIR /usr/src/app
 
-# Copy package files first (better caching)
+# native build tools
+RUN apk add --no-cache python3 make g++
+
 COPY package*.json ./
 
-# Install all dependencies (including dev)
-RUN npm ci
+RUN npm install --legacy-peer-deps
 
-# Copy source code
 COPY . .
 
-COPY .env .env
-# Build the app
 RUN npm run build
 
 
@@ -22,19 +20,17 @@ FROM node:22-alpine AS production
 
 WORKDIR /usr/src/app
 
-# Copy package files
+# native deps may still need these
+# RUN apk add --no-cache python3 make g++
+
 COPY package*.json ./
 
-# Install pnpm
-RUN npm install -g pnpm
-# Install only production dependencies
-RUN pnpm install --prod
+RUN npm install --production --legacy-peer-deps
 
-# Copy built files from builder
-COPY --from=builder /usr/src/app ./
+COPY --from=builder /usr/src/app/dist ./dist
 
-# Expose port
-EXPOSE 3000
+RUN mkdir -p ./uploads
 
-# Start the app
-CMD ["sh", "-c", "sleep 4 && pnpm run migration:run:prod && pnpm run start"]
+EXPOSE 3001
+# CMD ["npm", "run", "migration:run"]
+CMD ["sh", "-c", "npm run migration:run:prod && node dist/main.js"]

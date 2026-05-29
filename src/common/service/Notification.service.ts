@@ -4,7 +4,7 @@ import { PaginationDto } from 'src/common/dto/Pagination.dto';
 import { PaginationService } from 'src/common/service/pagination.service';
 import { PaginatedResult } from 'src/utils/paginate.util';
 import { In, Repository } from 'typeorm';
-import { Notification } from '../entities/Notifaction.entity';
+import { Notification, NotificationType } from '../entities/Notifaction.entity';
 import { QueryOptions } from 'src/utils/queryOption.util';
 import { PublisherService } from './RabbitPublish.service';
 @Injectable()
@@ -24,7 +24,9 @@ export class NotificationService {
     user_id: string;
     title: string;
     message: string;
-    type: 'task-assign' | 'task-invitation' | 'task-rejected' | 'task-approved';
+    type: NotificationType;
+    target?:'email'|'push',
+    email?:string
   }): Promise<boolean> {
     console.log('notificationData', notificationData);
     return await this.rabbitPublishService.publishNotificationEvent({
@@ -34,6 +36,8 @@ export class NotificationService {
       displayName: 'Leyu',
       message: notificationData.message,
       payload: { title: notificationData.title },
+      target:notificationData.target??'push',
+      email:notificationData.email
     });
   }
 

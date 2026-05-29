@@ -59,6 +59,11 @@ export class TaskServiceHelperService {
         'Cannot import contributors for public task',
       );
     }
+    if (task.id ===importDto.sourceTaskId){
+      throw new BadRequestException(
+        'Cannot import contributors from same task'
+      )
+    }
     const targetTaskMembers = await this.userTaskService.findAll({
       where: {
         task_id: taskId,
@@ -73,6 +78,7 @@ export class TaskServiceHelperService {
       targetTaskMembersUserId,
       importDto,
     );
+    console.log("Source task members",members)
     if (members.length == 0) {
       throw new NotFoundException('No members found');
     }
@@ -114,80 +120,83 @@ export class TaskServiceHelperService {
    * - returns: a promise that resolves to a list of contributors
    */
   async getMembersWithMinContributions(
-    excludedMemberIds: string[],
-    importDto: ImportContributorFromOtherTaskDto,
-  ): Promise<Contributors[]> {
-    const query = this.userTaskRepository
-      .createQueryBuilder('user_task')
-      // Filter by role
-      .where('user_task.role = :role', { role: 'Contributor' })
+  excludedMemberIds: string[],
+  importDto: ImportContributorFromOtherTaskDto,
+): Promise<Contributors[]> {
+  const query = this.userTaskRepository
+    .createQueryBuilder('user_task')
+    .where('user_task.role = :role', { role: 'Contributor' })
+    .andWhere('user_task.task_id = :taskId', { taskId: importDto.sourceTaskId })
+    .innerJoin('user_task.user', 'user');
 
-      // Filter by task
-      .andWhere('user_task.task_id = :taskId', {
-        taskId: importDto.sourceTaskId,
-      })
+  if (excludedMemberIds.length > 0) {
+    query.andWhere('user.id NOT IN (:...excludedMemberIds)', { excludedMemberIds });
+  }
 
-      // Join User to get user details
-      .innerJoin('user_task.user', 'user');
+  if (importDto.status && importDto.status !== 'All') {
+    query.andWhere('user_task.status = :status', { status: importDto.status });
+  }
 
-    // Optionally exclude members
-    if (excludedMemberIds.length > 0) {
-      query.andWhere('user.id NOT IN (:...excludedMemberIds)', {
-        excludedMemberIds,
-      });
-    }
+  const hasStatusFilter =
+    importDto.datasetStatus && importDto.datasetStatus !== 'All';
 
-    // Join contributions and microtasks (LEFT JOIN to include users with 0 contributions)
+  if (hasStatusFilter) {
+    query
+      .leftJoin(
+        'user.contributes',
+        'contributes',
+        'contributes.status = :datasetStatus',
+        { datasetStatus: importDto.datasetStatus },
+      )
+      .leftJoin(
+        'contributes.microTask',
+        'microTask',
+        'microTask.task_id = :taskId',
+        { taskId: importDto.sourceTaskId },
+      );
+  } else {
     query
       .leftJoin('user.contributes', 'contributes')
-      .leftJoin('contributes.microTask', 'microTask')
-
-      // Ensure contributions belong to microtasks of the same task (or none)
-      .andWhere('(microTask.task_id = :taskId OR microTask.task_id IS NULL)', {
-        taskId: importDto.sourceTaskId,
-      });
-    // Optional filter by dataset status
-    if (importDto.datasetStatus && importDto.datasetStatus != 'All') {
-      query.andWhere('contributes.status = :datasetStatus', {
-        datasetStatus: importDto.datasetStatus,
-      });
-    }
-    // Optional filter by status
-    if (importDto.status && importDto.status != 'All') {
-      query.andWhere('user_task.status = :status', {
-        status: importDto.status,
-      });
-    }
-
-    // Group by user and user_task to count contributions
-    query
-      .groupBy('user.id')
-      .addGroupBy('user_task.id')
-      .select([
-        'user.id AS id',
-        'user.first_name AS first_name',
-        'user.middle_name AS middle_name',
-        'user.last_name AS last_name',
-        'user.email AS email',
-        'user.phone_number AS phone_number',
-        'user.gender AS gender',
-      ])
-      .addSelect('COUNT(contributes.id)', 'contribution_count');
-
-    // Having clause (minimum contribution count)
-    if (
-      importDto.minNumberOfAcceptedDataSets &&
-      importDto.minNumberOfAcceptedDataSets > 0
-    ) {
-      query.having('COUNT(contributes.id) >= :limit', {
-        limit: importDto.minNumberOfAcceptedDataSets,
-      });
-    }
-    // Limit number of results
-    if (importDto.limit) {
-      query.take(importDto.limit);
-    }
-    // Execute query and return raw results
-    return await query.getRawMany();
+      .leftJoin(
+        'contributes.microTask',
+        'microTask',
+        'microTask.task_id = :taskId',
+        { taskId: importDto.sourceTaskId },
+      );
   }
+
+  query
+    .groupBy('user.id')
+    .addGroupBy('user_task.id')
+    .select([
+      'user.id AS id',
+      'user.first_name AS first_name',
+      'user.middle_name AS middle_name',
+      'user.last_name AS last_name',
+      'user.email AS email',
+      'user.phone_number AS phone_number',
+      'user.gender AS gender',
+    ])
+    // Only count contributions that matched the task via microTask join
+    .addSelect(
+      'COUNT(CASE WHEN microTask.task_id IS NOT NULL THEN contributes.id END)',
+      'contribution_count',
+    );
+
+  if (
+    importDto.minNumberOfAcceptedDataSets &&
+    importDto.minNumberOfAcceptedDataSets > 0
+  ) {
+    query.having(
+      'COUNT(CASE WHEN microTask.task_id IS NOT NULL THEN contributes.id END) >= :minCount',
+      { minCount: importDto.minNumberOfAcceptedDataSets },
+    );
+  }
+
+  if (importDto.limit) {
+    query.take(importDto.limit);
+  }
+
+  return await query.getRawMany();
+}
 }

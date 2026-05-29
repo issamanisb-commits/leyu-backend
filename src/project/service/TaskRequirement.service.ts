@@ -69,6 +69,7 @@ export class TaskRequirementService {
     await this.taskRequirementRepository.update(id, {
       ...taskRequirementData,
       dialects: taskDialects,
+      locations: taskRequirementData.locations?.map(l => ({ name: l }))
     });
     return await this.taskRequirementRepository.findOne({ where: { id } });
   }

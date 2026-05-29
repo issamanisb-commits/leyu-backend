@@ -56,7 +56,7 @@ export class IdempotencyService implements OnModuleInit, OnModuleDestroy {
       id: `${userId}:${idempotencyKey}`,
       status: IdempotencyStatus.PROCESSING,
     };
-    // NX — only set if not exists; prevents race conditions
+    // NX  only set if not exists; prevents race conditions
     await this.client!.set(
       this.key(idempotencyKey, userId),
       JSON.stringify(record),

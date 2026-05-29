@@ -20,9 +20,11 @@ import { FileService } from 'src/common/service/File.service';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { UserSanitize } from '../sanitize';
 import Redis from 'ioredis';
+import { I18nService } from 'nestjs-i18n';
+import { NotificationService } from 'src/common/service/Notification.service';
 
 const OTP_MAX_ATTEMPTS = 3;
-const OTP_ATTEMPTS_TTL_SECONDS = 300; // 5 minutes — matches OTP expiry
+const OTP_ATTEMPTS_TTL_SECONDS = 300; // 5 minutes  matches OTP expiry
 
 @Injectable()
 export class AuthService {
@@ -37,8 +39,9 @@ export class AuthService {
     private mailService: EmailService,
     private fileService: FileService,
     private jwtService: JwtService,
-    private eventEmitter: EventEmitter2,
     private configService: ConfigService,
+    private readonly i18n: I18nService,
+    private readonly notificationService:NotificationService,
   ) {
     this.redis = new Redis(
       this.configService.get<string>('REDIS_URL') as string,
@@ -273,6 +276,20 @@ export class AuthService {
       user.id,
       body.password,
     );
+    const title= this.i18n.t('common.password_change_notification_title', {
+        lang:user.preferred_language||'en'
+      }) || '';
+    const message= this.i18n.t('common.password_change_notification_message', {
+        lang:user.preferred_language||'en'
+      }) || '';
+    await this.notificationService.create(
+      {
+        user_id: user.id,
+        title: title,
+        message: message,
+        type: 'password-changed'
+      }
+    )
     return 'Password changed successfully';
   }
   /**

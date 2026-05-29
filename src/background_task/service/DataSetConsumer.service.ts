@@ -1,6 +1,6 @@
 // dataset.consumer.ts
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
+import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
 import { DataSource, QueryRunner } from 'typeorm';
 import { UserTaskService } from 'src/project/service/UserTask.service';
 import { CacheService } from 'src/cache/CacheService.service';
@@ -17,7 +17,6 @@ import { DataSetReview } from 'src/task_distribution/enitities/DataSetReview.ent
 import { DataSetStatus } from 'src/utils/constants/DataSetStatus.constant';
 import { Task } from 'src/project/entities/Task.entity';
 import { DataSet } from 'src/data_set/entities/DataSet.entity';
-import { I18nService } from 'nestjs-i18n';
 @Injectable()
 export class DatasetConsumer {
   private readonly logger = new Logger(DatasetConsumer.name);
@@ -33,7 +32,7 @@ export class DatasetConsumer {
     private readonly taskService: TaskService,
     private readonly microTaskService: MicroTaskService,
     private readonly userScoreService: UserScoreService,
-    private readonly i18n: I18nService,
+    // private readonly i18n: I18nService,
   ) {}
   @RabbitSubscribe({
     exchange: process.env.DATASET_RABBITMQ_EXCHANGE_NAME || 'dataset.exchange',
@@ -41,14 +40,19 @@ export class DatasetConsumer {
     queue: process.env.DATASET_RABBITMQ_QUEUE_NAME || 'dataset.queue',
     queueOptions: {
       durable: true,
+      deadLetterRoutingKey:'dataset.dead',
+      deadLetterExchange:'dataset.dlx',
     },
+    errorHandler:(channel, message, error) => {
+      channel.nack(message, false, false);
+    }
   })
   async handleDatasetAction(message: {
     datasetReviewId: string;
     action: 'APPROVED' | 'REJECTED';
     actorId: string;
     timestamp: string;
-  }): Promise<void> {
+  }): Promise<void | Nack> {
     try {
       this.logger.log(`Processing dataset ${message.datasetReviewId}`);
       if (message.action === 'REJECTED') {
@@ -58,6 +62,7 @@ export class DatasetConsumer {
       }
     } catch (e) {
       this.logger.error(e);
+      throw e;
     }
   }
 
@@ -176,7 +181,7 @@ export class DatasetConsumer {
         await queryRunner.rollbackTransaction();
       }
       this.logger.error(
-        `Error processing dataset review ${datasetReviewId}: ${err.message}`,
+        `Error processing rejected dataset  ${datasetReviewId}: ${err.message}`,
       );
       throw err;
     } finally {
@@ -358,7 +363,7 @@ export class DatasetConsumer {
         await queryRunner.rollbackTransaction();
       }
       this.logger.error(
-        `Error processing dataset review ${datasetReviewId}: ${error?.message}`,
+        `Error processing approved dataset  ${datasetReviewId}: ${error?.message}`,
       );
     } finally {
       if (queryRunner.isReleased === false) {

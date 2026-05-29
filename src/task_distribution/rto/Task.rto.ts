@@ -10,7 +10,7 @@ const translatedRejectionReasons = (
 ): string[] => {
   return rejectionReasons.map((rejectionReason) => {
     return (
-      rejectionReason.rejectionType.alternative_names.find(
+      rejectionReason.rejectionType.alternative_names?.find(
         (alt) => alt.key === userPreferredLanguage,
       )?.name ?? rejectionReason.rejectionType.name
     );

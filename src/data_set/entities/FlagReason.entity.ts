@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 import { DataSet } from './DataSet.entity';
 import { FlagType } from 'src/base_data/entities/FlagType.entity';
+import { DataSetReview } from 'src/task_distribution/enitities/DataSetReview.entity';
 
 @Entity()
 export class FlagReason {
@@ -27,14 +28,23 @@ export class FlagReason {
   @UpdateDateColumn()
   updated_date: Date;
 
-  // Rejection Reason belongs to Attempt
-  @ManyToOne(() => DataSet, (dateSet) => dateSet.flagReason)
+  // FlagReason belongs to DataSet
+  @ManyToOne(() => DataSet, (dataSet) => dataSet.flagReason)
   @JoinColumn({ name: 'data_set_id' })
   dataSet: DataSet;
   @Column({ nullable: false })
   data_set_id: string;
 
-  // Rejection Reason Type belongs to Rejection Type
+  // FlagReason belongs to DataSetReview
+  @ManyToOne(() => DataSetReview, (review) => review.flagReasons, {
+    nullable: true,
+  })
+  @JoinColumn({ name: 'data_set_review_id' })
+  dataSetReview: DataSetReview;
+  @Column({ nullable: true })
+  data_set_review_id: string;
+
+  // FlagReason belongs to FlagType
   @ManyToOne(() => FlagType, (flagType) => flagType.flagReasons)
   @JoinColumn({ name: 'flag_type_id' })
   flagType: FlagType;
