@@ -245,7 +245,7 @@ export class UsersController {
 
   @Get('/project-manager')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.PROJECT_MANAGER)
   @ApiExtraModels(PaginatedResult, UserSanitize)
   @ApiResponse({
     status: 200,

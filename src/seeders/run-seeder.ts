@@ -1,24 +1,22 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { DataSource } from 'typeorm';
-import { seedCountries, seedRegions, seedRejectionTypes ,seedLanguages,seedDialects} from './seed.helper';
+import { seedCountries, seedRegions, seedRejectionTypes, seedLanguages, seedDialects } from './seed.helper';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.createApplicationContext(AppModule);
   const dataSource = app.get(DataSource);
-  console.log('Loading seed ... ');
-  await seedCountries(dataSource);
-  console.log('Countries seeded ... ');
-  await seedRegions(dataSource);
-  console.log('Regions seeded ... ');
-  await seedRejectionTypes(dataSource);
-  console.log('Rejection types seeded ... ');
-  await seedLanguages(dataSource);
-  console.log('Languages seeded ... ');
-  await seedDialects(dataSource);
-  console.log('Dialects seeded ... ');
 
-  console.log('Seeding done ');
+  console.log('Loading seed ...');
+
+  try { await seedCountries(dataSource); } catch (e) { console.log('Countries already seeded, skipping...'); }
+  try { await seedRegions(dataSource); } catch (e) { console.log('Regions already seeded, skipping...'); }
+  try { await seedRejectionTypes(dataSource); } catch (e) { console.log('Rejection types already seeded, skipping...'); }
+  try { await seedLanguages(dataSource); } catch (e) { console.log('Languages already seeded, skipping...'); }
+  try { await seedDialects(dataSource); } catch (e) { console.log('Dialects already seeded, skipping...'); }
+
+  console.log('Seeding completed successfully!');
   await app.close();
 }
+
 bootstrap();

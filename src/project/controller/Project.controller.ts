@@ -63,7 +63,7 @@ export class ProjectController {
   ) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.PROJECT_MANAGER)
   @ApiConsumes('multipart/form-data')
   @UsePipes(new ValidationPipe({ whitelist: true }))
   @ApiBody({
