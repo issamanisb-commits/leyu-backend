@@ -298,11 +298,4 @@ export class DataSetController {
       updated_by: req.user.id,
     });
   }
-
-  @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.SUPER_ADMIN, Role.CONTRIBUTOR)
-  async remove(@Param('id') id: string, @Request() req) {
-    return this.dataSetService.remove(id);
-  }
 }

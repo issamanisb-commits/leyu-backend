@@ -280,19 +280,6 @@ export class TaskDistributionController {
     }
   }
 
-  @Post('/re-distribution')
-  @ApiOperation({ summary: 'Initialize task distribution' })
-  @ApiResponse({ status: 201, description: 'Task distribution initialized' })
-  async initializeTaskReDistribution() {
-    return this.taskRedistributionService.initializeTaskRedistribution();
-  }
-  // @Post('/contributor/:id')
-  // @ApiOperation({ summary: 'Initialize task distribution' })
-  // @ApiResponse({ status: 201, description: 'Task distribution initialized' })
-  // async initializeTaskReDistributionForContributor(@Param('id') contributor_id:string) {
-  //     return this.taskDistributionService.initializeTaskDistributionForContributor({user_id:contributor_id})
-  // }
-
   @Post('/:task_id/contribute_audio')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.CONTRIBUTOR)

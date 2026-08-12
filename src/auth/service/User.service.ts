@@ -43,8 +43,15 @@ import { FirstContributorUpdateDto } from '../dto/User.dto';
 import { LanguageConstants } from 'src/utils/constants/Language.constant';
 import { NotificationService } from 'src/common/service/Notification.service';
 import { I18nService } from 'nestjs-i18n';
+
+import { ConfigService } from '@nestjs/config';
+import Redis from 'ioredis';
+
+const OTP_MAX_ATTEMPTS = 3;
+const OTP_ATTEMPTS_TTL_SECONDS = 300; // 5 minutes - matches OTP expiry
 @Injectable()
 export class UserService {
+  private readonly redis: Redis;
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -64,12 +71,16 @@ export class UserService {
     private jwtService: JwtService,
     private readonly i18n: I18nService,
     private readonly notificationService:NotificationService,
-    // private eventEmitter: EventEmitter2,
+    private configService: ConfigService,
   ) {
     this.paginationService = new PaginationService<User>(this.userRepository);
+    this.redis = new Redis(
+      this.configService.get<string>('REDIS_URL') as string,
+    );
   }
   async onModuleInit() {
     await this.createSuperAdminIfNotExists();
+    
   }
 
   /**
@@ -308,19 +319,65 @@ export class UserService {
     }
   }
   /**
-   * Verifies a user's OTP given a verification code
-   * @throws {BadRequestException} - If the verification code is invalid or expired
+   * Verifies a user's OTP given a verification code.
+   * Failed attempt tracking is handled in Redis; after 3 failures the session is invalidated.
+   * @throws {BadRequestException} - If the session is expired, code is invalid, or max attempts reached
    */
   async verifyOtp(id: string, username: string, code: string): Promise<void> {
+    const attemptsKey = `otp:attempts:${username}`;
+
     const userVerificationCode = await this.userVerificationService.findOne({
-      where: { id: id, username: username, code: code },
+      where: { id: id, username: username },
     });
+
     if (!userVerificationCode) {
+      const expiredRecord = await this.userVerificationService.findOne({
+        where: { username: username, status: 'expired' },
+        order: { created_date: 'DESC' },
+      });
+      if (expiredRecord) {
+        throw new BadRequestException(
+          'OTP session expired. Please request a new OTP.',
+        );
+      }
       throw new BadRequestException('Invalid code');
     }
+
+    if (userVerificationCode.status === 'expired') {
+      throw new BadRequestException(
+        'OTP session expired. Please request a new OTP.',
+      );
+    }
+
     if (userVerificationCode.expiration_date < new Date()) {
+      await this.userVerificationService.expireSession(userVerificationCode.id);
+      await this.redis.del(attemptsKey);
       throw new BadRequestException('Code expired');
     }
+
+    if (userVerificationCode.code !== code) {
+      const attempts = await this.redis.incr(attemptsKey);
+      // Set TTL only on first increment so the key auto-expires with the OTP window
+      if (attempts === 1) {
+        await this.redis.expire(attemptsKey, OTP_ATTEMPTS_TTL_SECONDS);
+      }
+
+      if (attempts >= OTP_MAX_ATTEMPTS) {
+        await this.userVerificationService.expireSession(userVerificationCode.id);
+        await this.redis.del(attemptsKey);
+        throw new BadRequestException(
+          'Session invalidated after 3 failed attempts. Please request a new OTP.',
+        );
+      }
+
+      const remaining = OTP_MAX_ATTEMPTS - attempts;
+      throw new BadRequestException(
+        `Invalid code. ${remaining} attempt(s) remaining.`,
+      );
+    }
+
+    // Clear attempts on successful verification
+    await this.redis.del(attemptsKey);
     return;
   }
   /**

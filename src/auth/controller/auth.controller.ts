@@ -36,6 +36,7 @@ export class AuthController {
     return this.authService.signIn(signInDto.username, signInDto.password);
   }
 
+  @Throttle({ default: { limit: 3, ttl: 600 } })
   @Post('mobile_login')
   mobileSignIn(@Body() signInDto: MobileSignInDto) {
     return this.authService.mobileSignIn(signInDto);
@@ -55,10 +56,11 @@ export class AuthController {
   refreshToken(@Body() refreshTokenDto: { refresh_token: string }) {
     return this.authService.refreshToken(refreshTokenDto.refresh_token);
   }
+  
+  @Throttle({ default: { limit: 3, ttl: 600 } })
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   // @UseGuards(OtpThrottlerGuard)
-  @Throttle({ default: { limit: 3, ttl: 600 } })
   forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
     return this.authService.forgotPassword(forgotPasswordDto.username);
   }
