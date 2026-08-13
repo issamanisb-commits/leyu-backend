@@ -37,7 +37,7 @@ export class WalletController {
 
   @Post('withdraw-money')
   @Roles(Role.CONTRIBUTOR, Role.REVIEWER)
-  @UseGuards(WithdrawPayloadHmacGuard)
+  // @UseGuards(WithdrawPayloadHmacGuard)
   async withdrawMoney(
     @Body() withDrawData: WithdrawMoneyDto,
     @Request() req,

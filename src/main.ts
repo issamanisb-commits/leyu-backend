@@ -10,8 +10,9 @@ import { Queue } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import { Logger } from '@nestjs/common';
 import { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
-// import {  } from '@nestjs/throttler';
-
+import { AdminAuthMiddleware } from './middleware/admin-auth.middleware';
+import { JwtService } from '@nestjs/jwt';
+import { UserService } from './auth/service/User.service';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['debug', 'error', 'log', 'verbose', 'warn'],
@@ -56,6 +57,12 @@ async function bootstrap() {
     queues: [new BullMQAdapter(myQueue)],
     serverAdapter,
   });
+  const jwtService = app.get(JwtService);
+  const userService = app.get(UserService);
+  const adminAuthMiddleware = new AdminAuthMiddleware(jwtService, userService, configService);
+
+  // Apply authentication middleware to all admin queue routes
+  app.use('/admin/queues', (req, res, next) => adminAuthMiddleware.use(req, res, next));
   app.use('/admin/queues', serverAdapter.getRouter());
 
   // Shut down the app if RabbitMQ connection is lost

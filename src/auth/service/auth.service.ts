@@ -22,6 +22,7 @@ import { UserSanitize } from '../sanitize';
 import Redis from 'ioredis';
 import { I18nService } from 'nestjs-i18n';
 import { NotificationService } from 'src/common/service/Notification.service';
+import { UserVerificationCode } from '../entities/UserVerificationCode.entity';
 
 const OTP_MAX_ATTEMPTS = 3;
 const OTP_ATTEMPTS_TTL_SECONDS = 300; // 5 minutes  matches OTP expiry
@@ -238,6 +239,7 @@ export class AuthService {
     } else {
       await this.smsService.sendVerificationCode(user.phone_number, code);
     }
+    // SAVE ON REDIS
     const uv = await this.userVerificationService.create({
       username: username,
       code: code,
@@ -257,10 +259,11 @@ export class AuthService {
     code: string;
     password: string;
   }): Promise<string> {
-    await this.verifyOtp({
+    const record = await this.verifyOtp({
       username: body.username,
       code: body.code,
     });
+    await this.userVerificationService.markVerified(record.id);
     const user: User | null = await this.usersService.findOneWithPassword({
       where: [{ email: body.username }, { phone_number: body.username }],
       relations: { role: true },
@@ -290,6 +293,7 @@ export class AuthService {
         type: 'password-changed'
       }
     )
+    
     return 'Password changed successfully';
   }
   /**
@@ -297,7 +301,7 @@ export class AuthService {
    * Failed attempt tracking is handled in Redis; after 3 failures the session is invalidated.
    * @throws {BadRequestException} - If the session is expired, code is invalid, or max attempts reached
    */
-  async verifyOtp(body: { username: string; code: string }): Promise<void> {
+  async verifyOtp(body: { username: string; code: string }): Promise<UserVerificationCode> {
     const attemptsKey = `otp:attempts:${body.username}`;
 
     const record =
@@ -350,9 +354,8 @@ export class AuthService {
         `Invalid code. ${remaining} attempt(s) remaining.`,
       );
     }
-
-    await this.userVerificationService.markVerified(record.id);
     await this.redis.del(attemptsKey);
+    return record;
   }
   /**
    * Generates an access token and a refresh token for a user
