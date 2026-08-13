@@ -74,9 +74,9 @@ async function bootstrap() {
   Logger.log(`📦 Environment: ${environment}`);
   Logger.log(`🌐 CORS enabled for origin: ${corsOrigin}`);
   Logger.log(`📚 Swagger documentation: http://localhost:${port}/doc`);
-  Logger.log(`💾 Database: ${configService.get<string>('DATABASE_URL')}`);
-  Logger.log(`📦 Redis: ${configService.get<string>('REDIS_URL')}`);
-  Logger.log(`📦 RabbitMQ: ${configService.get<string>('RABBITMQ_URI')}`);
+  Logger.log(`💾 Database: ${configService.get<string>('DATABASE_URL') ? 'connected' : 'NOT CONFIGURED'}`);
+  Logger.log(`📦 Redis: ${configService.get<string>('REDIS_URL') ? 'connected' : 'NOT CONFIGURED'}`);
+  Logger.log(`📦 RabbitMQ: ${configService.get<string>('RABBITMQ_URI') ? 'connected' : 'NOT CONFIGURED'}`);
   Logger.log(`📦 Minio: ${configService.get<string>('MINIO_ENDPOINT')}`);
 }
 bootstrap();
