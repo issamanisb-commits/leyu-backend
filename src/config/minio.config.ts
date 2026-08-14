@@ -29,7 +29,7 @@ export const s3 = new S3Client({
     accessKeyId: accessKeyId || '',
     secretAccessKey: secretAccessKey || '',
   },
-  region: configService.get<string>('AWS_REGION') || 'global',
+  region: configService.get<string>('AWS_REGION') || 'us-east-1',
   forcePathStyle: true,
 });
 
