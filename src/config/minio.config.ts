@@ -9,26 +9,33 @@ import crypto from 'crypto';
 ConfigModule.forRoot({ envFilePath: '.env', isGlobal: true });
 const configService = new ConfigService();
 
+const formatEndpoint = (url?: string) => {
+  if (!url) return undefined;
+  return url.startsWith('http://') || url.startsWith('https://') 
+    ? url 
+    : `https://${url}`;
+};
+
 export const s3 = new S3Client({
-  endpoint: configService.get<string>('MINIO_ENDPOINT'),
+  endpoint: formatEndpoint(configService.get<string>('MINIO_ENDPOINT')),
   credentials: {
     accessKeyId: configService.get<string>('MINIO_ACCESS_KEY') as string,
     secretAccessKey: configService.get<string>('MINIO_SECRET_KEY') as string,
   },
   region: 'us-east-1',
-  forcePathStyle:true // configService.get<boolean>('MINIO_S3_FORCE_PATH_STYLE', true),
+  forcePathStyle: true,
 });
 
 export const multerAudioS3Storage = multerS3({
   s3: s3,
   bucket: configService.get<string>('MINIO_BUCKET'),
-
   contentType: multerS3.AUTO_CONTENT_TYPE,
   key: function (req, file, cb) {
     const folder = 'audios/';
     cb(null, folder + Date.now().toString() + '-' + file.originalname);
   },
 });
+
 export const multerCSVS3Storage = multerS3({
   s3: s3,
   bucket: configService.get<string>('MINIO_BUCKET'),
@@ -38,16 +45,17 @@ export const multerCSVS3Storage = multerS3({
     cb(null, folder + Date.now().toString() + '-' + file.originalname);
   },
 });
+
 export const multerImageS3Storage = multerS3({
   s3: s3,
   bucket: configService.get<string>('MINIO_BUCKET'),
-
   contentType: multerS3.AUTO_CONTENT_TYPE,
   key: function (req, file, cb) {
     const folder = 'image/';
     cb(null, folder + Date.now().toString() + '-' + file.originalname);
   },
 });
+
 export const multerAudioDiskConfig = {
   storage: diskStorage({
     destination: './uploads',
