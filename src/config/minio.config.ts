@@ -16,13 +16,20 @@ const formatEndpoint = (url?: string) => {
     : `https://${url}`;
 };
 
+const accessKeyId = configService.get<string>('MINIO_ACCESS_KEY');
+const secretAccessKey = configService.get<string>('MINIO_SECRET_KEY');
+
+if (!accessKeyId || !secretAccessKey) {
+  console.warn('⚠️ WARNING: MINIO_ACCESS_KEY or MINIO_SECRET_KEY is missing from environment variables!');
+}
+
 export const s3 = new S3Client({
   endpoint: formatEndpoint(configService.get<string>('MINIO_ENDPOINT')),
   credentials: {
-    accessKeyId: configService.get<string>('MINIO_ACCESS_KEY') as string,
-    secretAccessKey: configService.get<string>('MINIO_SECRET_KEY') as string,
+    accessKeyId: accessKeyId || '',
+    secretAccessKey: secretAccessKey || '',
   },
-  region: 'us-east-1',
+  region: configService.get<string>('AWS_REGION') || 'global',
   forcePathStyle: true,
 });
 
