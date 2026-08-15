@@ -40,6 +40,7 @@ import { RolesGuard } from 'src/auth/guard/role.guard';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
   multerAudioS3Storage,
+  multerAudioMemoryStorage,
   multerCSVS3Storage,
   multerImageS3Storage,
 } from 'src/config/minio.config';
@@ -283,7 +284,7 @@ export class MicroTaskController {
   @ApiParam({ name: 'task_id', type: 'string' })
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: multerAudioS3Storage,
+      ...multerAudioMemoryStorage,
       limits: { fileSize: 10 * 1024 * 1024 },
       fileFilter: (req, file, cb) => {
         if (!file.mimetype.startsWith('audio/')) {
@@ -313,13 +314,38 @@ export class MicroTaskController {
   ) {
     // get the file path from the file object
     if (!file) throw new BadRequestException('Audio Required');
+
+    // Validate audio duration (competition requirement: 10-60 seconds)
+    const { parseBuffer } = await import('music-metadata');
+    let duration = 0;
+    try {
+      const metadata = await parseBuffer(file.buffer, file.mimetype);
+      duration = metadata.format.duration ?? 0;
+    } catch (err) {
+      throw new BadRequestException(
+        'Could not read audio file. Please upload a valid audio recording.',
+      );
+    }
+    if (duration < 10 || duration > 60) {
+      throw new BadRequestException(
+        `Audio duration must be between 10 and 60 seconds. Got ${duration.toFixed(1)}s.`,
+      );
+    }
+
     const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     const is_test = req.body.is_test === 'true' || req.body.is_test === true;
     const instruction = req.body.instruction ? req.body.instruction : null;
+    const objectName = `${Date.now()}-${file.originalname}`;
     try {
-      const filePath = file.key; // This is the URL of the uploaded file in MinIO
+      // Upload to S3 now that validation has passed
+      await this.fileService.uploadAudioFiles(
+        objectName,
+        file.buffer,
+        file.mimetype,
+      );
+      const filePath = 'audios/' + objectName;
       const dataDto = {
         task_id: task_id, // Assuming task_id is the same as micro_task_id
         // file: filePath, // Use the file path as the text data set
@@ -349,7 +375,7 @@ export class MicroTaskController {
     } catch (error) {
       await queryRunner.rollbackTransaction();
       // delete the file from MinIO if needed
-      await this.fileService.deleteFile(file.key);
+      await this.fileService.deleteFile('audios/' + objectName);
       throw error;
     } finally {
       if (queryRunner) {
@@ -400,13 +426,38 @@ export class MicroTaskController {
   ) {
     // get the file path from the file object
     if (!file) throw new BadRequestException('Audio Required');
+
+    // Validate audio duration (competition requirement: 10-60 seconds)
+    const { parseBuffer } = await import('music-metadata');
+    let duration = 0;
+    try {
+      const metadata = await parseBuffer(file.buffer, file.mimetype);
+      duration = metadata.format.duration ?? 0;
+    } catch (err) {
+      throw new BadRequestException(
+        'Could not read audio file. Please upload a valid audio recording.',
+      );
+    }
+    if (duration < 10 || duration > 60) {
+      throw new BadRequestException(
+        `Audio duration must be between 10 and 60 seconds. Got ${duration.toFixed(1)}s.`,
+      );
+    }
+
     const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     const is_test = req.body.is_test === 'true' || req.body.is_test === true;
     const instruction = req.body.instruction ? req.body.instruction : null;
+    const objectName = `${Date.now()}-${file.originalname}`;
     try {
-      const filePath = file.key; // This is the URL of the uploaded file in MinIO
+      // Upload to S3 now that validation has passed
+      await this.fileService.uploadAudioFiles(
+        objectName,
+        file.buffer,
+        file.mimetype,
+      );
+      const filePath = 'audios/' + objectName;
       const dataDto = {
         task_id: task_id, // Assuming task_id is the same as micro_task_id
         // file: filePath, // Use the file path as the text data set
@@ -439,7 +490,7 @@ export class MicroTaskController {
     } catch (error) {
       await queryRunner.rollbackTransaction();
       // delete the file from MinIO if needed
-      await this.fileService.deleteFile(file.key);
+      await this.fileService.deleteFile('audios/' + objectName);
       throw error;
     } finally {
       if (queryRunner) {

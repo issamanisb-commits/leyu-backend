@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { S3Client } from '@aws-sdk/client-s3';
 import multerS3 from 'multer-s3';
 import { diskStorage } from 'multer';
+import multer from 'multer';
 import { extname } from 'path';
 import crypto from 'crypto';
 
@@ -56,4 +57,9 @@ export const multerAudioDiskConfig = {
       cb(null, uniqueName);
     },
   }),
+};
+
+export const multerAudioMemoryStorage = {
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
 };
