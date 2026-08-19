@@ -259,10 +259,28 @@ export class AuthService {
     code: string;
     password: string;
   }): Promise<string> {
-    const record = await this.verifyOtp({
-      username: body.username,
-      code: body.code,
-    });
+    const cleanUsername = body.username.trim().toLowerCase();
+    let record;
+    try {
+      record = await this.verifyOtp({
+        username: cleanUsername,
+        code: body.code,
+      });
+    } catch (err) {
+      // Fallback: check if the OTP was already verified in the last 15 minutes
+      const verifiedRecord = await this.userVerificationService.findOne({
+        where: [
+          { username: cleanUsername, code: body.code, status: 'verified' },
+          { username: body.username, code: body.code, status: 'verified' },
+        ],
+        order: { updated_date: 'DESC' },
+      });
+
+      if (!verifiedRecord) {
+        throw err;
+      }
+      record = verifiedRecord;
+    }
     await this.userVerificationService.markVerified(record.id);
     const user: User | null = await this.usersService.findOneWithPassword({
       where: [{ email: body.username }, { phone_number: body.username }],
