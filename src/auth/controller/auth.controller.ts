@@ -6,7 +6,7 @@ import { Body,
   Param,
   ParseIntPipe,
   Post,
-  UseGuards,, BadRequestException } from '@nestjs/common';
+  UseGuards, BadRequestException } from '@nestjs/common';
 import { AuthService } from '../service/auth.service';
 
 import { ApiBearerAuth, ApiBody, ApiTags } from '@nestjs/swagger';

@@ -264,7 +264,7 @@ export class AuthService {
 
     console.log('[RESET-PASSWORD] Attempting reset for:', cleanUsername, 'with code:', cleanCode);
 
-    let record = null;
+    let record: any = null;
     try {
       record = await this.verifyOtp({ username: cleanUsername, code: cleanCode });
     } catch (err) {
