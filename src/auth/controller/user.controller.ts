@@ -14,6 +14,7 @@ import {
   Patch,
   ParseUUIDPipe,
   ValidationPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { UserService } from '../service/User.service';
 import {
@@ -582,7 +583,31 @@ export class UsersController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('image', { storage: multerImageS3Storage }))
+   @UseInterceptors(FileInterceptor('image', { 
+    storage: multerImageS3Storage ,
+    limits:{
+      fileSize:5 * 1024 * 1024
+    }, // 5 MB,
+    fileFilter: (req, file, cb) => {
+      const allowedMimeTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+      ];
+
+      if (allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(
+          new BadRequestException(
+            'Only JPEG, PNG, and WebP images are allowed',
+          ),
+          false,
+        );
+      }
+    }
+
+  }))
   async updateProfilePicture(@UploadedFile() file: any, @Request() request) {
     const file_key = file.key;
     const user_id = request.user.id;
@@ -612,7 +637,31 @@ export class UsersController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('image', { storage: multerImageS3Storage }))
+   @UseInterceptors(FileInterceptor('image', { 
+    storage: multerImageS3Storage ,
+    limits:{
+      fileSize:5 * 1024 * 1024
+    }, // 5 MB,
+    fileFilter: (req, file, cb) => {
+      const allowedMimeTypes = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+      ];
+
+      if (allowedMimeTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(
+          new BadRequestException(
+            'Only JPEG, PNG, and WebP images are allowed',
+          ),
+          false,
+        );
+      }
+    }
+
+  }))
   async updateNationalIdInage(@UploadedFile() file: any, @Request() request) {
     const file_key = file.key;
     const user_id = request.user.id;

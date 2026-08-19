@@ -32,8 +32,6 @@ import * as path from 'path';
 import { ThrottlerStorageRedisService } from 'nestjs-throttler-storage-redis';
 import { APP_GUARD } from '@nestjs/core';
 import { HttpOnlyThrottlerGuard } from './auth/guard/otp-throttler.guard';
-// import { APP_GUARD } from '@nestjs/core';
-// import { OtpThrottlerGuard } from './auth/guard/otp-throttler.guard';
 import { ChatbotModule } from './chatbot/chatbot.module';
 @Module({
   imports: [
@@ -111,7 +109,7 @@ import { ChatbotModule } from './chatbot/chatbot.module';
     ThrottlerModule.forRoot({
       throttlers: [
         {
-          ttl: 60000,
+          ttl: 60_000,
           limit: 400,
         },
       ],
