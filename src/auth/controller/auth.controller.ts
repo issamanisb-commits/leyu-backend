@@ -1,5 +1,4 @@
-import {
-  Body,
+import { Body,
   Controller,
   Get,
   HttpCode,
@@ -7,8 +6,7 @@ import {
   Param,
   ParseIntPipe,
   Post,
-  UseGuards,
-} from '@nestjs/common';
+  UseGuards,, BadRequestException } from '@nestjs/common';
 import { AuthService } from '../service/auth.service';
 
 import { ApiBearerAuth, ApiBody, ApiTags } from '@nestjs/swagger';
@@ -64,13 +62,21 @@ export class AuthController {
   forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
     return this.authService.forgotPassword(forgotPasswordDto.username);
   }
-  @Post('reset-password/')
+    @Post('reset-password/')
   @HttpCode(HttpStatus.OK)
   resetPassword(
     @Body()
     setPassword: SetNewPasswordDto,
   ) {
-    return this.authService.setNewPassword(setPassword);
+    const username = setPassword.username || setPassword.email;
+    const code = setPassword.code || setPassword.otp || setPassword.token;
+    const password = setPassword.password || setPassword.newPassword || setPassword.new_password;
+
+    if (!username || !code || !password) {
+      throw new BadRequestException('Username/email, code/OTP, and password are required.');
+    }
+
+    return this.authService.setNewPassword({ username, code, password });
   }
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)

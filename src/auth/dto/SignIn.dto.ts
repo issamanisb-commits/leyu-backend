@@ -6,6 +6,7 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
+
 export class SignInDto {
   @ApiProperty()
   @IsString({ message: 'Email or phone number must be a string' })
@@ -19,6 +20,7 @@ export class SignInDto {
   @MinLength(6, { message: 'Password must be at least 6 characters' })
   password: string;
 }
+
 export class MobileSignInDto {
   @ApiProperty()
   @IsString({ message: 'Email or phone number must be a string' })
@@ -44,28 +46,56 @@ export class MobileSignInDto {
   })
   device_type?: 'android' | 'ios' | 'web';
 }
+
 export class ForgotPasswordDto {
   @ApiProperty()
   @IsString({ message: 'Email or phone number must be a string' })
   @IsNotEmpty({ message: 'Email or phone number is required' })
   username: string;
 }
+
 export class SetNewPasswordDto {
   @ApiProperty()
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  username: string;
+  username?: string;
 
   @ApiProperty()
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  code: string;
+  email?: string;
 
   @ApiProperty()
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  password: string;
+  code?: string;
+
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  otp?: string;
+
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  token?: string;
+
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  password?: string;
+
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  newPassword?: string;
+
+  @ApiProperty()
+  @IsOptional()
+  @IsString()
+  new_password?: string;
 }
+
 export class VerifyOtp {
   @ApiProperty()
   @IsString()
